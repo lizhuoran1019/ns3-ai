@@ -29,9 +29,9 @@ class Ns3Env(gym.Env):
             elif mtype == pb.UINT:
                 mtype = np.uint
             elif mtype == pb.DOUBLE:
-                mtype = np.float
+                mtype = np.float64
             else:
-                mtype = np.float
+                mtype = np.float32
 
             space = spaces.Box(low=low, high=high, shape=shape, dtype=mtype)
 
@@ -315,7 +315,7 @@ class Ns3Env(gym.Env):
         self.gameOverReason = None
         self.extraInfo = None
 
-        self.msgInterface = self.exp.run(show_output=True)
+        self.msgInterface = self.exp.run(setting=self.ns3Settings, show_output=True)
         self.initialize_env()
         # get first observations
         self.rx_env_state()
