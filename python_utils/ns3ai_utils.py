@@ -42,9 +42,9 @@ def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
     # import pdb; pdb.set_trace()
     exec_path = os.path.join(path, 'ns3')
     if not setting:
-        cmd = '{} run {}'.format(exec_path, pname)
+        cmd = '{} run --quiet {}'.format(exec_path, pname)
     else:
-        cmd = '{} run {} --{}'.format(exec_path, pname, get_setting(setting))
+        cmd = '{} run --quiet "{} {}"'.format(exec_path, pname, get_setting(setting))
     if show_output:
         proc = subprocess.Popen(cmd, shell=True, text=True, env=env,
                                 stdin=subprocess.PIPE,
@@ -148,7 +148,7 @@ class Experiment:
         self.kill()
         self.simCmd, self.proc = run_single_ns3(
             './', self.targetName, setting=setting, show_output=show_output)
-        print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
+        # print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
         # exit if an early error occurred, such as wrong target name
         time.sleep(SIMULATION_EARLY_ENDING)
         if not self.isalive():
