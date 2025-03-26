@@ -111,7 +111,8 @@ class Experiment:
             raise Exception('ns3ai_utils: Error: Experiment is singleton')
         self._created = True
         self.targetName = targetName  # ns-3 target name, not file name
-        os.chdir(ns3Path)
+        # os.chdir(ns3Path)
+        self.ns3Path = ns3Path
         self.msgModule = msgModule
         self.handleFinish = handleFinish
         self.useVector = useVector
@@ -147,7 +148,7 @@ class Experiment:
     def run(self, setting=None, show_output=False):
         self.kill()
         self.simCmd, self.proc = run_single_ns3(
-            './', self.targetName, setting=setting, show_output=show_output)
+            self.ns3Path, self.targetName, setting=setting, show_output=show_output)
         # print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
         # exit if an early error occurred, such as wrong target name
         time.sleep(SIMULATION_EARLY_ENDING)
