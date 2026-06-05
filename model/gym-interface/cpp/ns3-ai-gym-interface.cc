@@ -102,7 +102,7 @@ ParseGymMessageOrThrow(google::protobuf::MessageLite* message,
 }
 
 void
-HandleStopRequest(OpenGymInterface* interface)
+HandleStopRequest()
 {
     NS_LOG_DEBUG("---Stop requested: true");
     Simulator::Stop();
@@ -261,7 +261,7 @@ OpenGymInterface::Init()
     if (stopSim)
     {
         m_stopEnvRequested = true;
-        HandleStopRequest(this);
+        HandleStopRequest();
         return;
     }
 }
@@ -338,7 +338,7 @@ OpenGymInterface::ReceiveActions()
     if (stopSim)
     {
         m_stopEnvRequested = true;
-        HandleStopRequest(this);
+        HandleStopRequest();
         return;
     }
 
