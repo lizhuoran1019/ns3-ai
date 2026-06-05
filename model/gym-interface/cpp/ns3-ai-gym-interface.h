@@ -30,6 +30,7 @@
 #include <ns3/ptr.h>
 #include <ns3/type-id.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -95,12 +96,16 @@ class OpenGymInterface : public Object
     static std::unordered_map<std::string, Ptr<OpenGymInterface>>* DoGetNamedInterfaces();
 
     Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* GetMsgInterface();
+    uint64_t NextSequence();
 
     bool m_simEnd;
     bool m_stopEnvRequested;
     bool m_initSimMsgSent;
     bool m_stateAwaitingAction;
     uint32_t m_memorySize;
+    uint64_t m_nextSequence;
+    uint64_t m_pendingInitSequence;
+    uint64_t m_pendingStateSequence;
     Ns3AiMsgInterfaceNames m_msgNames;
     std::unique_ptr<Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>> m_msgInterface;
 

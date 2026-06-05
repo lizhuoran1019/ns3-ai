@@ -97,11 +97,13 @@ message SimInitMsg {
 //	uint64 wafShellProcessId = 2;
 	SpaceDescription obsSpace = 1;
 	SpaceDescription actSpace = 2;
+	uint64 sequence = 3;
 }
 
 message SimInitAck {
 	bool done = 1;
 	bool stopSimReq = 2;
+	uint64 sequence = 3;
 }
 
 message EnvStateMsg {
@@ -115,10 +117,12 @@ message EnvStateMsg {
 	}
 	Reason reason = 4;
 	string info = 5;
+	uint64 sequence = 6;
 }
 
 message EnvActMsg {
 	DataContainer actData = 1;
 	bool stopSimReq = 2;
+	uint64 sequence = 3;
 }
 //------------------------//
