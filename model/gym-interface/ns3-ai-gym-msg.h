@@ -28,6 +28,9 @@
 
 #define MSG_BUFFER_SIZE NS3_AI_GYM_MSG_BUFFER_SIZE
 
+static constexpr uint32_t NS3_AI_GYM_MSG_SCHEMA_VERSION = 1;
+static constexpr uint64_t NS3_AI_GYM_MSG_SCHEMA_HASH = 0x4E33414947594D01ULL; // "N3AIGYM" + v1
+
 struct Ns3AiGymMsg
 {
     uint8_t buffer[MSG_BUFFER_SIZE];
