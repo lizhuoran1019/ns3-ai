@@ -53,14 +53,13 @@ class Ns3VecEnv:
         if launch_simulation:
             run_settings = dict(ns3Settings or {})
             run_settings.setdefault("numAgents", self.num_envs)
-            self.envs[0].start(setting=run_settings, show_output=show_output)
-            for env in self.envs[1:]:
-                env.initialize_env()
-                env.rx_env_state()
-        else:
-            for env in self.envs:
-                env.initialize_env()
-                env.rx_env_state()
+            self.envs[0].msgInterface = self.envs[0].exp.run(setting=run_settings,
+                                                              show_output=show_output)
+
+        for env in self.envs:
+            env.initialize_env()
+        for env in self.envs:
+            env.rx_env_state()
 
         self.single_observation_space = self.envs[0].observation_space
         self.single_action_space = self.envs[0].action_space
