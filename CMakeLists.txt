@@ -155,6 +155,7 @@ if(NS3AI_ENABLE_PYTHON_BINDINGS)
             LANGUAGE python
             PROTOC_OUT_DIR "${NS3AI_PYTHON_PACKAGE_BUILD_DIR}"
     )
+    message(STATUS "ns3-ai Gym Python package build directory: ${NS3AI_PYTHON_BUILD_ROOT}")
 endif()
 
 build_lib(
