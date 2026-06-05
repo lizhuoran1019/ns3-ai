@@ -13,6 +13,7 @@
 
 #include <ns3/ptr.h>
 
+#include <string>
 #include <vector>
 
 namespace ns3
