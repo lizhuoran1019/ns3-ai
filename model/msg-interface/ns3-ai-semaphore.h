@@ -20,7 +20,9 @@
 #ifndef NS3_AI_SEMAPHORE_H
 #define NS3_AI_SEMAPHORE_H
 
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 /**
  * \brief Structure providing semaphore operations
@@ -59,26 +61,71 @@ struct Ns3AiSemaphore
 
     static inline bool sem_try_wait(volatile uint8_t* mem)
     {
-        return atomic_add_unless8(mem, -1, 0);
+        return atomic_add_unless8(mem, static_cast<uint8_t>(-1), 0);
     }
 
-    static inline void sem_wait(volatile uint8_t* mem)
+    /**
+     * Waits for a semaphore token.
+     *
+     * timeout_us == 0 keeps the historical unbounded wait behavior. When a
+     * timeout is configured, the function returns false instead of spinning
+     * forever. If abort_flag is supplied and becomes true, the wait is also
+     * aborted. The backoff avoids burning one CPU core while a peer process is
+     * doing slow inference or has already exited.
+     */
+    static inline bool sem_wait(volatile uint8_t* mem,
+                                uint64_t timeout_us = 0,
+                                const volatile bool* abort_flag = nullptr)
     {
-        if (!sem_try_wait(mem))
+        if (sem_try_wait(mem))
         {
-            do
+            return true;
+        }
+
+        const auto start = std::chrono::steady_clock::now();
+        uint32_t attempts = 0;
+        while (true)
+        {
+            if (abort_flag != nullptr && *abort_flag)
             {
-                if (sem_try_wait(mem))
+                return false;
+            }
+            if (sem_try_wait(mem))
+            {
+                return true;
+            }
+            if (timeout_us > 0)
+            {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - start);
+                if (static_cast<uint64_t>(elapsed.count()) >= timeout_us)
                 {
-                    break;
+                    return false;
                 }
-            } while (true);
+            }
+            Backoff(attempts++);
         }
     }
 
     static inline uint8_t sem_post(volatile uint8_t* mem)
     {
         return atomic_add8(mem, 1);
+    }
+
+  private:
+    static inline void Backoff(uint32_t attempts)
+    {
+        if (attempts < 64)
+        {
+            std::this_thread::yield();
+            return;
+        }
+        if (attempts < 1024)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 };
 
