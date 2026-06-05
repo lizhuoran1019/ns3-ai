@@ -4,42 +4,45 @@
 
 ### `libtensorflow` Installation
 
-If `model/libtensorflow` directory exists, targets using TensorFlow C API
-are automatically enabled.
+Targets using TensorFlow C API are enabled only when the TensorFlow C library is configured explicitly with CMake variables. Do not copy third-party binaries into the ns3-ai source tree.
 
 #### For x86-64-based operating systems
 
 1. Download prebuilt library from [TensorFlow official website](https://www.tensorflow.org/install/lang_c).
-2. Extract tarball under `model`.
+2. Extract tarball outside the ns3-ai source tree, for example under `/opt` or another dependency directory.
 
 ```shell
-cd YOUR_NS3_DIRECTORY
-mkdir contrib/ai/model/libtensorflow
-tar -xf PATH_TO_TARBALL -C contrib/ai/model/libtensorflow
+mkdir -p /opt/libtensorflow
+tar -xf PATH_TO_TARBALL -C /opt/libtensorflow --strip-components=1
 ```
 
 #### For arm64-based macOS
 
-1. The website does not provide arm64 prebuilt library. You need to
-build it, or get prebuilt library with `brew`. You can install
-`libtensorflow` with `brew`:
+The website does not provide arm64 prebuilt library. You need to build it, or get prebuilt library with `brew`. You can install `libtensorflow` with `brew`:
 
 ```shell
 brew install tensorflow
 ```
 
-2. Then copy the files to ns3-ai.
-
-```shell
-cd YOUR_NS3_DIRECTORY
-cp -r /opt/homebrew/Cellar/libtensorflow/YOUR_VERSION/ contrib/ai/model/libtensorflow
-```
-
 ### Cmake settings
 
-The following variables are available if `libtensorflow` is installed correctly:
+Configure ns-3 with one of the following forms:
 
-- `NS3AI_LIBTENSORFLOW_EXAMPLES`: Whether `libtensorflow` is found. Should be `ON` or `OFF`.
+```shell
+./ns3 configure -- -DNS3AI_LIBTENSORFLOW_ROOT=/opt/libtensorflow
+```
+
+or pass include and library directories separately:
+
+```shell
+./ns3 configure -- \
+  -DNS3AI_LIBTENSORFLOW_INCLUDE_DIR=/opt/libtensorflow/include \
+  -DNS3AI_LIBTENSORFLOW_LIBRARY_DIR=/opt/libtensorflow/lib
+```
+
+The following variables are available if `libtensorflow` is configured correctly:
+
+- `NS3AI_LIBTENSORFLOW_EXAMPLES`: Whether TensorFlow C examples are enabled. Should be `ON` or `OFF`.
 - `TensorFlow_LIBRARIES`: Dynamically-linked libraries.
 - `Libtensorflow_INCLUDE_DIR`: The include directory.
 
@@ -63,41 +66,44 @@ available when TensorFlow offers sufficient C API to developers.
 
 ### `libtorch` Installation
 
-If `model/libtorch` directory exists, targets using PyTorch C++ API are
-automatically enabled.
+Targets using PyTorch C++ API are enabled only when libtorch is configured explicitly with CMake variables. Do not copy third-party binaries into the ns3-ai source tree.
 
 #### For x86-64-based operating systems
 
 1. Download prebuilt library from [PyTorch official website](https://pytorch.org).
-2. Unzip under `model`.
+2. Unzip it outside the ns3-ai source tree, for example under `/opt` or another dependency directory.
 
 ```shell
-cd YOUR_NS3_DIRECTORY
-unzip PATH_TO_ZIP -d contrib/ai/model/
+unzip PATH_TO_ZIP -d /opt/
 ```
 
 #### For arm64-based macOS
 
-1. The website does not provide arm64 prebuilt library. You need to
-   build it, or get prebuilt library with `brew`. You can install
-   `libtorch` with `brew`:
+The website does not provide arm64 prebuilt library. You need to build it, or get prebuilt library with `brew`. You can install `libtorch` with `brew`:
 
 ```shell
 brew install pytorch
 ```
 
-2. Then copy the files to ns3-ai.
-
-```shell
-cd YOUR_NS3_DIRECTORY
-cp -r /opt/homebrew/Cellar/pytorch/YOUR_VERSION/ contrib/ai/model/libtorch
-```
-
 ### Cmake settings
 
-The following variables are available if `libtorch` is installed correctly:
+Configure ns-3 with one of the following forms:
 
-- `NS3AI_LIBTORCH_EXAMPLES`: Whether `libtorch` is found. Should be `ON` or `OFF`.
+```shell
+./ns3 configure -- -DNS3AI_LIBTORCH_ROOT=/opt/libtorch
+```
+
+or pass include and library directories separately:
+
+```shell
+./ns3 configure -- \
+  -DNS3AI_LIBTORCH_INCLUDE_DIRS="/opt/libtorch/include;/opt/libtorch/include/torch/csrc/api/include" \
+  -DNS3AI_LIBTORCH_LIBRARY_DIR=/opt/libtorch/lib
+```
+
+The following variables are available if `libtorch` is configured correctly:
+
+- `NS3AI_LIBTORCH_EXAMPLES`: Whether libtorch examples are enabled. Should be `ON` or `OFF`.
 - `Torch_LIBRARIES`: Dynamically-linked libraries.
 - `Libtorch_INCLUDE_DIRS`: Include directories.
 
