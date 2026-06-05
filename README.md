@@ -35,6 +35,15 @@ greater flexibility.
 
 Check out [install.md](./docs/install.md) for how to install and setup ns3-ai.
 
+Python binding modules are built by default. For a C++-only build that does not need the ns3-ai Python
+binding modules, configure ns-3 with:
+
+```bash
+./ns3 configure -- -DNS3AI_ENABLE_PYTHON_BINDINGS=OFF
+```
+
+Leaving `NS3AI_ENABLE_PYTHON_BINDINGS` unset preserves the default Python-enabled build.
+
 ## Quickstart on ns3-ai
 
 ### Demo
