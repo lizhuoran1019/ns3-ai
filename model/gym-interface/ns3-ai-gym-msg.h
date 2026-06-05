@@ -22,7 +22,11 @@
 
 #include <stdint.h>
 
-#define MSG_BUFFER_SIZE 1024
+#ifndef NS3_AI_GYM_MSG_BUFFER_SIZE
+#define NS3_AI_GYM_MSG_BUFFER_SIZE 65536
+#endif
+
+#define MSG_BUFFER_SIZE NS3_AI_GYM_MSG_BUFFER_SIZE
 
 struct Ns3AiGymMsg
 {
