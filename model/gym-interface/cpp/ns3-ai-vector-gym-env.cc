@@ -103,6 +103,8 @@ OpenGymVectorEnv::Initialize(uint32_t envIndex)
     ValidateEnvIndex(envIndex);
     NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
     m_activeEnvIndex = envIndex;
+    m_interfaces[envIndex]->SetGetActionSpaceCb(MakeCallback(&OpenGymEnv::GetActionSpace, this));
+    m_interfaces[envIndex]->SetGetObservationSpaceCb(MakeCallback(&OpenGymEnv::GetObservationSpace, this));
     m_interfaces[envIndex]->Init();
 }
 
@@ -123,7 +125,13 @@ OpenGymVectorEnv::Notify(uint32_t envIndex)
     ValidateEnvIndex(envIndex);
     NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
     m_activeEnvIndex = envIndex;
-    m_interfaces[envIndex]->Notify(this);
+    m_interfaces[envIndex]->SetGetGameOverCb(MakeCallback(&OpenGymEnv::GetGameOver, this));
+    m_interfaces[envIndex]->SetGetObservationCb(MakeCallback(&OpenGymEnv::GetObservation, this));
+    m_interfaces[envIndex]->SetGetRewardCb(MakeCallback(&OpenGymEnv::GetReward, this));
+    m_interfaces[envIndex]->SetGetExtraInfoCb(MakeCallback(&OpenGymEnv::GetExtraInfo, this));
+    m_interfaces[envIndex]->SetExecuteActionsCb(MakeCallback(&OpenGymEnv::ExecuteActions, this));
+    m_interfaces[envIndex]->SendCurrentState();
+    m_interfaces[envIndex]->ReceiveActions();
 }
 
 void
@@ -132,7 +140,20 @@ OpenGymVectorEnv::NotifyAll()
     NS_LOG_FUNCTION(this);
     for (uint32_t envIndex = 0; envIndex < m_numEnvs; ++envIndex)
     {
-        Notify(envIndex);
+        ValidateEnvIndex(envIndex);
+        NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
+        m_activeEnvIndex = envIndex;
+        m_interfaces[envIndex]->SetGetGameOverCb(MakeCallback(&OpenGymEnv::GetGameOver, this));
+        m_interfaces[envIndex]->SetGetObservationCb(MakeCallback(&OpenGymEnv::GetObservation, this));
+        m_interfaces[envIndex]->SetGetRewardCb(MakeCallback(&OpenGymEnv::GetReward, this));
+        m_interfaces[envIndex]->SetGetExtraInfoCb(MakeCallback(&OpenGymEnv::GetExtraInfo, this));
+        m_interfaces[envIndex]->SetExecuteActionsCb(MakeCallback(&OpenGymEnv::ExecuteActions, this));
+        m_interfaces[envIndex]->SendCurrentState();
+    }
+    for (uint32_t envIndex = 0; envIndex < m_numEnvs; ++envIndex)
+    {
+        m_activeEnvIndex = envIndex;
+        m_interfaces[envIndex]->ReceiveActions();
     }
 }
 
