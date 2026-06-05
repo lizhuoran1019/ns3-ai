@@ -45,6 +45,8 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 
     m.attr("msg_buffer_size") = MSG_BUFFER_SIZE;
     m.attr("default_sync_timeout_us") = GymMsgInterface::DEFAULT_SYNC_TIMEOUT_US;
+    m.attr("schema_hash") = py::int_(NS3_AI_GYM_MSG_SCHEMA_HASH);
+    m.attr("schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION;
 
     py::class_<Ns3AiGymMsg>(m, "Ns3AiGymMsg")
         .def(py::init<>())
@@ -83,10 +85,10 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
              py::arg("lockable_name") = "My Lockable",
              py::arg("sync_timeout_us") = GymMsgInterface::DEFAULT_SYNC_TIMEOUT_US,
              py::arg("header_name") = "My Header",
-             py::arg("cpp2py_schema_hash") = 0,
-             py::arg("py2cpp_schema_hash") = 0,
-             py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0)
+             py::arg("cpp2py_schema_hash") = NS3_AI_GYM_MSG_SCHEMA_HASH,
+             py::arg("py2cpp_schema_hash") = NS3_AI_GYM_MSG_SCHEMA_HASH,
+             py::arg("cpp2py_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION,
+             py::arg("py2cpp_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION)
         .def("PyRecvBegin", &GymMsgInterface::PyRecvBegin)
         .def("PyRecvEnd", &GymMsgInterface::PyRecvEnd)
         .def("PySendBegin", &GymMsgInterface::PySendBegin)
