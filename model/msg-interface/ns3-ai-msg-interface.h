@@ -34,6 +34,7 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <typeinfo>
 #include <unordered_map>
@@ -51,7 +52,7 @@ struct Ns3AiMsgSync
     volatile uint8_t m_cpp2pyFullCount{0};
     volatile uint8_t m_py2cppEmptyCount{1};
     volatile uint8_t m_py2cppFullCount{0};
-    bool m_isFinished{false};
+    volatile bool m_isFinished{false};
 };
 
 /**
@@ -81,6 +82,8 @@ template <typename Cpp2PyMsgType, typename Py2CppMsgType>
 class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 {
   public:
+    static constexpr uint64_t DEFAULT_SYNC_TIMEOUT_US = 300000000;
+
     Ns3AiMsgInterfaceImpl() = delete;
 
     explicit Ns3AiMsgInterfaceImpl(bool is_memory_creator,
@@ -90,7 +93,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                                    const char* segment_name = "My Seg",
                                    const char* cpp2py_msg_name = "My Cpp to Python Msg",
                                    const char* py2cpp_msg_name = "My Python to Cpp Msg",
-                                   const char* lockable_name = "My Lockable")
+                                   const char* lockable_name = "My Lockable",
+                                   uint64_t sync_timeout_us = DEFAULT_SYNC_TIMEOUT_US)
         : m_cpp2pyStruct(nullptr),
           m_py2CppStruct(nullptr),
           m_cpp2pyVector(nullptr),
@@ -100,6 +104,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
           m_useVector(use_vector),
           m_handleFinish(handle_finish),
           m_segName(segment_name),
+          m_syncTimeoutUs(sync_timeout_us),
           m_isFinished(false)
     {
         using namespace boost::interprocess;
@@ -153,7 +158,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             if (m_handleFinish && !m_isFinished)
             {
-                CppSetFinished();
+                TryCppSetFinished();
             }
         }
     };
@@ -211,6 +216,15 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         return m_py2cppVector;
     };
 
+    /**
+     * Gets the per-operation synchronization timeout in microseconds.
+     * A value of 0 disables timeout and restores the historical unbounded wait.
+     */
+    uint64_t GetSyncTimeoutUs() const
+    {
+        return m_syncTimeoutUs;
+    };
+
     // for C++ side:
 
     /**
@@ -219,7 +233,15 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     void CppSendBegin()
     {
-        Ns3AiSemaphore::sem_wait(&m_sync->m_cpp2pyEmptyCount);
+        WaitOrThrow(&m_sync->m_cpp2pyEmptyCount, "CppSendBegin", "cpp2py empty slot", true);
+    };
+
+    /**
+     * Non-throwing version of CppSendBegin.
+     */
+    bool TryCppSendBegin()
+    {
+        return WaitForSync(&m_sync->m_cpp2pyEmptyCount, true);
     };
 
     /**
@@ -237,7 +259,15 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     void CppRecvBegin()
     {
-        Ns3AiSemaphore::sem_wait(&m_sync->m_py2cppFullCount);
+        WaitOrThrow(&m_sync->m_py2cppFullCount, "CppRecvBegin", "py2cpp full slot", true);
+    };
+
+    /**
+     * Non-throwing version of CppRecvBegin.
+     */
+    bool TryCppRecvBegin()
+    {
+        return WaitForSync(&m_sync->m_py2cppFullCount, true);
     };
 
     /**
@@ -256,14 +286,44 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     void CppSetFinished()
     {
         assert(m_handleFinish);
+        if (!TryCppSetFinished())
+        {
+            ThrowSyncFailure("CppSetFinished", "cpp2py empty slot");
+        }
+    };
+
+    /**
+     * Non-throwing version of CppSetFinished.
+     */
+    bool TryCppSetFinished()
+    {
+        assert(m_handleFinish);
         if (m_isFinished)
         {
-            return;
+            return true;
         }
         m_isFinished = true;
-        CppSendBegin();
         m_sync->m_isFinished = true;
-        CppSendEnd();
+
+        if (Ns3AiSemaphore::sem_try_wait(&m_sync->m_cpp2pyEmptyCount))
+        {
+            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+            return true;
+        }
+
+        // A full cpp2py slot already wakes the Python side; the finish flag is
+        // visible when that pending message is consumed.
+        if (Ns3AiSemaphore::atomic_read8(&m_sync->m_cpp2pyFullCount) > 0)
+        {
+            return true;
+        }
+
+        if (Ns3AiSemaphore::sem_wait(&m_sync->m_cpp2pyEmptyCount, m_syncTimeoutUs))
+        {
+            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+            return true;
+        }
+        return false;
     };
 
     // for Python side:
@@ -274,11 +334,30 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     void PyRecvBegin()
     {
-        Ns3AiSemaphore::sem_wait(&m_sync->m_cpp2pyFullCount);
+        if (!TryPyRecvBegin())
+        {
+            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot");
+        }
+    };
+
+    /**
+     * Non-throwing version of PyRecvBegin.
+     */
+    bool TryPyRecvBegin()
+    {
+        if (!WaitForSync(&m_sync->m_cpp2pyFullCount, false))
+        {
+            if (m_handleFinish)
+            {
+                m_isFinished = m_sync->m_isFinished;
+            }
+            return false;
+        }
         if (m_handleFinish)
         {
             m_isFinished = m_sync->m_isFinished;
         }
+        return true;
     };
 
     /**
@@ -296,7 +375,23 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     void PySendBegin()
     {
-        Ns3AiSemaphore::sem_wait(&m_sync->m_py2cppEmptyCount);
+        WaitOrThrow(&m_sync->m_py2cppEmptyCount, "PySendBegin", "py2cpp empty slot", true);
+    };
+
+    /**
+     * Non-throwing version of PySendBegin.
+     */
+    bool TryPySendBegin()
+    {
+        if (!WaitForSync(&m_sync->m_py2cppEmptyCount, true))
+        {
+            if (m_handleFinish)
+            {
+                m_isFinished = m_sync->m_isFinished;
+            }
+            return false;
+        }
+        return true;
     };
 
     /**
@@ -318,6 +413,47 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
   private:
+    bool WaitForSync(volatile uint8_t* counter, bool abortOnFinished)
+    {
+        const volatile bool* abortFlag =
+            (abortOnFinished && m_handleFinish) ? &m_sync->m_isFinished : nullptr;
+        return Ns3AiSemaphore::sem_wait(counter, m_syncTimeoutUs, abortFlag);
+    };
+
+    void WaitOrThrow(volatile uint8_t* counter,
+                     const char* operation,
+                     const char* waitTarget,
+                     bool abortOnFinished)
+    {
+        if (!WaitForSync(counter, abortOnFinished))
+        {
+            ThrowSyncFailure(operation, waitTarget);
+        }
+    };
+
+    [[noreturn]] void ThrowSyncFailure(const char* operation, const char* waitTarget) const
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai message interface synchronization failed in " << operation
+            << " while waiting for " << waitTarget << ". ";
+        if (m_handleFinish && m_sync->m_isFinished)
+        {
+            oss << "The peer has already marked the shared session as finished. ";
+        }
+        else if (m_syncTimeoutUs > 0)
+        {
+            oss << "Timed out after " << m_syncTimeoutUs << " us. ";
+        }
+        else
+        {
+            oss << "The wait was aborted. ";
+        }
+        oss << "Check that C++ and Python send/recv calls are paired in the same order. "
+            << "Increase the timeout with Ns3AiMsgInterface::SetSyncTimeoutUs(), "
+            << "or set it to 0 to restore unbounded waiting for intentionally long inference.";
+        throw std::runtime_error(oss.str());
+    };
+
     std::unique_ptr<boost::interprocess::managed_shared_memory> m_segment;
 
     Cpp2PyMsgType* m_cpp2pyStruct;
@@ -330,6 +466,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     const bool m_useVector;
     const bool m_handleFinish;
     const std::string m_segName;
+    const uint64_t m_syncTimeoutUs;
     bool m_isFinished;
 };
 
@@ -385,6 +522,32 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
     void SetMemorySize(uint32_t size)
     {
         this->m_size = size;
+    };
+
+    /**
+     * Sets per-operation synchronization timeout in microseconds.
+     * A value of 0 disables timeout and restores the historical unbounded wait.
+     */
+    void SetSyncTimeoutUs(uint64_t timeoutUs)
+    {
+        this->m_syncTimeoutUs = timeoutUs;
+    };
+
+    /**
+     * Sets per-operation synchronization timeout in milliseconds.
+     * A value of 0 disables timeout and restores the historical unbounded wait.
+     */
+    void SetSyncTimeoutMs(uint64_t timeoutMs)
+    {
+        this->m_syncTimeoutUs = timeoutMs * 1000;
+    };
+
+    /**
+     * Gets per-operation synchronization timeout in microseconds.
+     */
+    uint64_t GetSyncTimeoutUs() const
+    {
+        return this->m_syncTimeoutUs;
     };
 
     /**
@@ -471,7 +634,8 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
             segmentName.c_str(),
             cpp2pyMsgName.c_str(),
             py2cppMsgName.c_str(),
-            lockableName.c_str());
+            lockableName.c_str(),
+            this->m_syncTimeoutUs);
         auto rawInterface = interface.get();
         m_interfaces.emplace(key, std::move(interface));
         return rawInterface;
@@ -489,7 +653,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         oss << typeid(Cpp2PyMsgType).name() << '|' << typeid(Py2CppMsgType).name() << '|'
             << instanceId << '|' << segmentName << '|' << cpp2pyMsgName << '|' << py2cppMsgName
             << '|' << lockableName << '|' << m_isMemoryCreator << '|' << m_useVector << '|'
-            << m_handleFinish << '|' << m_size;
+            << m_handleFinish << '|' << m_size << '|' << m_syncTimeoutUs;
         return oss.str();
     };
 
@@ -497,6 +661,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
     bool m_useVector{false};
     bool m_handleFinish{false};
     uint32_t m_size = 4096;
+    uint64_t m_syncTimeoutUs = Ns3AiMsgInterfaceImpl<uint8_t, uint8_t>::DEFAULT_SYNC_TIMEOUT_US;
     std::string m_segmentName = "My Seg";
     std::string m_cpp2pyMsgName = "My Cpp to Python Msg";
     std::string m_py2cppMsgName = "My Python to Cpp Msg";
