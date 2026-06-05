@@ -72,6 +72,10 @@ else()
     set(NS3AI_LIBTORCH_EXAMPLES OFF)
 endif()
 
+set(NS3AI_GENERATED_CPP_DIR "${CMAKE_CURRENT_BINARY_DIR}/model/gym-interface/cpp")
+set(NS3AI_PYTHON_PACKAGE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/python/ns3ai_gym_env")
+include_directories(${NS3AI_GENERATED_CPP_DIR})
+
 set(msg_interface_srcs )
 # Keep pybind-only helper headers out of build_lib HEADER_FILES: ns-3 generates an aggregate
 # module header from this list, and including pybind11 there forces every C++ executable to link
@@ -83,7 +87,7 @@ set(gym_interface_srcs
         model/gym-interface/cpp/ns3-ai-vector-gym-env.cc
         model/gym-interface/cpp/container.cc
         model/gym-interface/cpp/spaces.cc
-        model/gym-interface/cpp/messages.pb.cc
+        ${NS3AI_GENERATED_CPP_DIR}/messages.pb.cc
 )
 set(gym_interface_hdrs
         model/gym-interface/cpp/ns3-ai-gym-interface.h
@@ -91,6 +95,7 @@ set(gym_interface_hdrs
         model/gym-interface/cpp/ns3-ai-vector-gym-env.h
         model/gym-interface/cpp/container.h
         model/gym-interface/cpp/spaces.h
+        ${NS3AI_GENERATED_CPP_DIR}/messages.pb.h
 )
 
 # protobuf_generate function is missing in some installations by package manager
@@ -102,20 +107,23 @@ else()
     include(${CMAKE_CURRENT_SOURCE_DIR}/protobuf-generate.cmake)
 endif()
 
-# Compile proto files
+# Compile proto files without writing generated outputs back into the source tree.
 add_library(proto-objects OBJECT "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/messages.proto")
 protobuf_generate(
         TARGET proto-objects
         IMPORT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface"
         LANGUAGE cpp
-        PROTOC_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/cpp"
+        PROTOC_OUT_DIR "${NS3AI_GENERATED_CPP_DIR}"
 )
 if(NS3AI_ENABLE_PYTHON_BINDINGS)
+    file(MAKE_DIRECTORY "${NS3AI_PYTHON_PACKAGE_BUILD_DIR}")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/py/ns3ai_gym_env/"
+         DESTINATION "${NS3AI_PYTHON_PACKAGE_BUILD_DIR}")
     protobuf_generate(
             TARGET proto-objects
             IMPORT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface"
             LANGUAGE python
-            PROTOC_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/py/ns3ai_gym_env"
+            PROTOC_OUT_DIR "${NS3AI_PYTHON_PACKAGE_BUILD_DIR}"
     )
 endif()
 
