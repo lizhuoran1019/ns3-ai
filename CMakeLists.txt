@@ -73,7 +73,8 @@ else()
 endif()
 
 set(NS3AI_GENERATED_CPP_DIR "${CMAKE_CURRENT_BINARY_DIR}/model/gym-interface/cpp")
-set(NS3AI_PYTHON_PACKAGE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/python/ns3ai_gym_env")
+set(NS3AI_PYTHON_BUILD_ROOT "${CMAKE_CURRENT_BINARY_DIR}/python")
+set(NS3AI_PYTHON_PACKAGE_BUILD_DIR "${NS3AI_PYTHON_BUILD_ROOT}/ns3ai_gym_env")
 include_directories(${NS3AI_GENERATED_CPP_DIR})
 
 set(msg_interface_srcs )
@@ -119,6 +120,12 @@ if(NS3AI_ENABLE_PYTHON_BINDINGS)
     file(MAKE_DIRECTORY "${NS3AI_PYTHON_PACKAGE_BUILD_DIR}")
     file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/py/ns3ai_gym_env/"
          DESTINATION "${NS3AI_PYTHON_PACKAGE_BUILD_DIR}")
+    set(NS3AI_PYTHON_PACKAGE_ROOT "${NS3AI_PYTHON_BUILD_ROOT}")
+    configure_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/py/setup-build.py.in"
+            "${NS3AI_PYTHON_BUILD_ROOT}/setup.py"
+            @ONLY
+    )
     protobuf_generate(
             TARGET proto-objects
             IMPORT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface"
