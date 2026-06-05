@@ -216,28 +216,36 @@ class Ns3Env(gym.Env):
         elif spaceType == spaces.Box:
             dataContainer.type = pb.Box
             boxContainerPb = pb.BoxDataContainer()
-            shape = [len(actions)]
-            boxContainerPb.shape.extend(shape)
+            action_array = np.asarray(actions, dtype=spaceDesc.dtype)
+            target_shape = tuple(spaceDesc.shape)
+            if action_array.shape != target_shape:
+                expected_size = int(np.prod(target_shape, dtype=np.int64))
+                if action_array.size != expected_size:
+                    raise ValueError(
+                        "ns3-ai Gym Box action shape {} cannot match expected shape {}".format(
+                            action_array.shape, target_shape
+                        )
+                    )
+                action_array = action_array.reshape(target_shape)
+            boxContainerPb.shape.extend(action_array.shape)
+            flat_actions = action_array.reshape(-1)
+            dtype = np.dtype(spaceDesc.dtype)
 
-            if spaceDesc.dtype in ['int', 'int8', 'int16', 'int32', 'int64']:
+            if np.issubdtype(dtype, np.signedinteger):
                 boxContainerPb.dtype = pb.INT
-                boxContainerPb.intData.extend(actions)
+                boxContainerPb.intData.extend(flat_actions.tolist())
 
-            elif spaceDesc.dtype in ['uint', 'uint8', 'uint16', 'uint32', 'uint64']:
+            elif np.issubdtype(dtype, np.unsignedinteger):
                 boxContainerPb.dtype = pb.UINT
-                boxContainerPb.uintData.extend(actions)
+                boxContainerPb.uintData.extend(flat_actions.tolist())
 
-            elif spaceDesc.dtype in ['float', 'float32', 'float64']:
-                boxContainerPb.dtype = pb.FLOAT
-                boxContainerPb.floatData.extend(actions)
-
-            elif spaceDesc.dtype in ['double']:
+            elif dtype == np.dtype(np.float64):
                 boxContainerPb.dtype = pb.DOUBLE
-                boxContainerPb.doubleData.extend(actions)
+                boxContainerPb.doubleData.extend(flat_actions.tolist())
 
             else:
                 boxContainerPb.dtype = pb.FLOAT
-                boxContainerPb.floatData.extend(actions)
+                boxContainerPb.floatData.extend(flat_actions.tolist())
 
             dataContainer.data.Pack(boxContainerPb)
 
