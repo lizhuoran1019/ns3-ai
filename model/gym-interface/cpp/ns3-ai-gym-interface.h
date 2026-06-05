@@ -62,6 +62,8 @@ class OpenGymInterface : public Object
 
     void Init();
     void NotifyCurrentState();
+    void SendCurrentState();
+    void ReceiveActions();
     void WaitForStop();
     void NotifySimulationEnd();
 
@@ -97,6 +99,7 @@ class OpenGymInterface : public Object
     bool m_simEnd;
     bool m_stopEnvRequested;
     bool m_initSimMsgSent;
+    bool m_stateAwaitingAction;
     uint32_t m_memorySize;
     Ns3AiMsgInterfaceNames m_msgNames;
     std::unique_ptr<Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>> m_msgInterface;

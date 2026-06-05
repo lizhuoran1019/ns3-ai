@@ -79,6 +79,7 @@ OpenGymInterface::OpenGymInterface()
     : m_simEnd(false),
       m_stopEnvRequested(false),
       m_initSimMsgSent(false),
+      m_stateAwaitingAction(false),
       m_memorySize(4096),
       m_msgNames{"My Seg", "My Cpp to Python Msg", "My Python to Cpp Msg", "My Lockable"}
 {
@@ -155,7 +156,6 @@ OpenGymInterface::GetMsgInterface()
 void
 OpenGymInterface::Init()
 {
-    // do not send init msg twice
     if (m_initSimMsgSent)
     {
         return;
@@ -168,21 +168,17 @@ OpenGymInterface::Init()
     ns3_ai_gym::SimInitMsg simInitMsg;
     if (obsSpace)
     {
-        ns3_ai_gym::SpaceDescription spaceDesc;
-        spaceDesc = obsSpace->GetSpaceDescription();
+        ns3_ai_gym::SpaceDescription spaceDesc = obsSpace->GetSpaceDescription();
         simInitMsg.mutable_obsspace()->CopyFrom(spaceDesc);
     }
     if (actionSpace)
     {
-        ns3_ai_gym::SpaceDescription spaceDesc;
-        spaceDesc = actionSpace->GetSpaceDescription();
+        ns3_ai_gym::SpaceDescription spaceDesc = actionSpace->GetSpaceDescription();
         simInitMsg.mutable_actspace()->CopyFrom(spaceDesc);
     }
 
-    // get the interface
     Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
 
-    // send init msg to python
     msgInterface->CppSendBegin();
     msgInterface->GetCpp2PyStruct()->size = simInitMsg.ByteSizeLong();
     assert(msgInterface->GetCpp2PyStruct()->size <= MSG_BUFFER_SIZE);
@@ -190,7 +186,6 @@ OpenGymInterface::Init()
                                 msgInterface->GetCpp2PyStruct()->size);
     msgInterface->CppSendEnd();
 
-    // receive init ack msg from python
     ns3_ai_gym::SimInitAck simInitAck;
     msgInterface->CppRecvBegin();
     simInitAck.ParseFromArray(msgInterface->GetPy2CppStruct()->buffer,
@@ -211,7 +206,7 @@ OpenGymInterface::Init()
 }
 
 void
-OpenGymInterface::NotifyCurrentState()
+OpenGymInterface::SendCurrentState()
 {
     if (!m_initSimMsgSent)
     {
@@ -221,22 +216,21 @@ OpenGymInterface::NotifyCurrentState()
     {
         return;
     }
-    // collect current env state
+    assert(!m_stateAwaitingAction && "previous Gym state has not received an action yet");
+
     Ptr<OpenGymDataContainer> obsDataContainer = GetObservation();
     float reward = GetReward();
     bool isGameOver = IsGameOver();
     std::string extraInfo = GetExtraInfo();
     ns3_ai_gym::EnvStateMsg envStateMsg;
-    // observation
+
     ns3_ai_gym::DataContainer obsDataContainerPbMsg;
     if (obsDataContainer)
     {
         obsDataContainerPbMsg = obsDataContainer->GetDataContainerPbMsg();
         envStateMsg.mutable_obsdata()->CopyFrom(obsDataContainerPbMsg);
     }
-    // reward
     envStateMsg.set_reward(reward);
-    // game over
     envStateMsg.set_isgameover(false);
     if (isGameOver)
     {
@@ -250,32 +244,36 @@ OpenGymInterface::NotifyCurrentState()
             envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::GameOver);
         }
     }
-    // extra info
     envStateMsg.set_info(extraInfo);
 
-    // get the interface
     Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
-
-    // send env state msg to python
     msgInterface->CppSendBegin();
     msgInterface->GetCpp2PyStruct()->size = envStateMsg.ByteSizeLong();
     assert(msgInterface->GetCpp2PyStruct()->size <= MSG_BUFFER_SIZE);
     envStateMsg.SerializeToArray(msgInterface->GetCpp2PyStruct()->buffer,
                                  msgInterface->GetCpp2PyStruct()->size);
-
     msgInterface->CppSendEnd();
+    m_stateAwaitingAction = true;
+}
 
-    // receive act msg from python
+void
+OpenGymInterface::ReceiveActions()
+{
+    if (m_stopEnvRequested || !m_stateAwaitingAction)
+    {
+        return;
+    }
+
+    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
     ns3_ai_gym::EnvActMsg envActMsg;
     msgInterface->CppRecvBegin();
-
     envActMsg.ParseFromArray(msgInterface->GetPy2CppStruct()->buffer,
                              msgInterface->GetPy2CppStruct()->size);
     msgInterface->CppRecvEnd();
+    m_stateAwaitingAction = false;
 
     if (m_simEnd)
     {
-        // if sim end only rx msg and quit
         return;
     }
 
@@ -289,7 +287,6 @@ OpenGymInterface::NotifyCurrentState()
         std::exit(0);
     }
 
-    // first step after reset is called without actions, just to get current state
     ns3_ai_gym::DataContainer actDataContainerPbMsg = envActMsg.actdata();
     Ptr<OpenGymDataContainer> actDataContainer =
         OpenGymDataContainer::CreateFromDataContainerPbMsg(actDataContainerPbMsg);
@@ -297,10 +294,16 @@ OpenGymInterface::NotifyCurrentState()
 }
 
 void
+OpenGymInterface::NotifyCurrentState()
+{
+    SendCurrentState();
+    ReceiveActions();
+}
+
+void
 OpenGymInterface::WaitForStop()
 {
     NS_LOG_FUNCTION(this);
-    //    NS_LOG_UNCOND("Wait for stop message");
     NotifyCurrentState();
 }
 

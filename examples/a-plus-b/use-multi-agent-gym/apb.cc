@@ -11,7 +11,6 @@
 
 #include <chrono>
 #include <iostream>
-#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -19,76 +18,74 @@
 namespace ns3
 {
 
-class MultiAgentApbEnv : public OpenGymEnv
+class MultiAgentApbVecEnv : public OpenGymVectorEnv
 {
   public:
-    explicit MultiAgentApbEnv(uint32_t agentId);
-    ~MultiAgentApbEnv() override;
+    explicit MultiAgentApbVecEnv(uint32_t numAgents);
+    ~MultiAgentApbVecEnv() override;
     static TypeId GetTypeId();
     void DoDispose() override;
 
-    uint32_t GetAPlusB();
-    uint32_t GetAgentId() const;
+    void SetOperands(uint32_t agentId, uint32_t a, uint32_t b);
+    uint32_t GetAPlusB(uint32_t agentId) const;
 
-    // OpenGym interfaces:
-    Ptr<OpenGymSpace> GetActionSpace() override;
-    Ptr<OpenGymSpace> GetObservationSpace() override;
-    bool GetGameOver() override;
-    Ptr<OpenGymDataContainer> GetObservation() override;
-    float GetReward() override;
-    std::string GetExtraInfo() override;
-    bool ExecuteActions(Ptr<OpenGymDataContainer> action) override;
-
-    uint32_t m_a;
-    uint32_t m_b;
+    // OpenGymVectorEnv indexed interfaces:
+    Ptr<OpenGymSpace> GetActionSpace(uint32_t envIndex) override;
+    Ptr<OpenGymSpace> GetObservationSpace(uint32_t envIndex) override;
+    bool GetGameOver(uint32_t envIndex) override;
+    Ptr<OpenGymDataContainer> GetObservation(uint32_t envIndex) override;
+    float GetReward(uint32_t envIndex) override;
+    std::string GetExtraInfo(uint32_t envIndex) override;
+    bool ExecuteActions(uint32_t envIndex, Ptr<OpenGymDataContainer> action) override;
 
   private:
-    uint32_t m_agentId;
-    uint32_t m_sum;
+    std::vector<uint32_t> m_a;
+    std::vector<uint32_t> m_b;
+    std::vector<uint32_t> m_sum;
 };
 
-MultiAgentApbEnv::MultiAgentApbEnv(uint32_t agentId)
-    : m_a(0),
-      m_b(0),
-      m_agentId(agentId),
-      m_sum(0)
+MultiAgentApbVecEnv::MultiAgentApbVecEnv(uint32_t numAgents)
+    : OpenGymVectorEnv(numAgents),
+      m_a(numAgents, 0),
+      m_b(numAgents, 0),
+      m_sum(numAgents, 0)
 {
-    SetOpenGymInterface("ns3ai-apb-agent-" + std::to_string(m_agentId));
+    SetOpenGymInterfaces("ns3ai-apb-agent");
 }
 
-MultiAgentApbEnv::~MultiAgentApbEnv()
+MultiAgentApbVecEnv::~MultiAgentApbVecEnv()
 {
 }
 
 TypeId
-MultiAgentApbEnv::GetTypeId()
+MultiAgentApbVecEnv::GetTypeId()
 {
-    static TypeId tid = TypeId("ns3::MultiAgentApbEnv")
-                            .SetParent<OpenGymEnv>()
+    static TypeId tid = TypeId("ns3::MultiAgentApbVecEnv")
+                            .SetParent<OpenGymVectorEnv>()
                             .SetGroupName("OpenGym");
     return tid;
 }
 
 void
-MultiAgentApbEnv::DoDispose()
+MultiAgentApbVecEnv::DoDispose()
 {
 }
 
-uint32_t
-MultiAgentApbEnv::GetAPlusB()
+void
+MultiAgentApbVecEnv::SetOperands(uint32_t agentId, uint32_t a, uint32_t b)
 {
-    Notify();
-    return m_sum;
+    m_a.at(agentId) = a;
+    m_b.at(agentId) = b;
 }
 
 uint32_t
-MultiAgentApbEnv::GetAgentId() const
+MultiAgentApbVecEnv::GetAPlusB(uint32_t agentId) const
 {
-    return m_agentId;
+    return m_sum.at(agentId);
 }
 
 Ptr<OpenGymSpace>
-MultiAgentApbEnv::GetActionSpace()
+MultiAgentApbVecEnv::GetActionSpace(uint32_t envIndex)
 {
     std::vector<uint32_t> shape = {1};
     std::string dtype = TypeNameGet<uint32_t>();
@@ -97,7 +94,7 @@ MultiAgentApbEnv::GetActionSpace()
 }
 
 Ptr<OpenGymSpace>
-MultiAgentApbEnv::GetObservationSpace()
+MultiAgentApbVecEnv::GetObservationSpace(uint32_t envIndex)
 {
     std::vector<uint32_t> shape = {3};
     std::string dtype = TypeNameGet<uint32_t>();
@@ -106,41 +103,41 @@ MultiAgentApbEnv::GetObservationSpace()
 }
 
 bool
-MultiAgentApbEnv::GetGameOver()
+MultiAgentApbVecEnv::GetGameOver(uint32_t envIndex)
 {
     return false;
 }
 
 Ptr<OpenGymDataContainer>
-MultiAgentApbEnv::GetObservation()
+MultiAgentApbVecEnv::GetObservation(uint32_t envIndex)
 {
     std::vector<uint32_t> shape = {3};
     Ptr<OpenGymBoxContainer<uint32_t>> box = CreateObject<OpenGymBoxContainer<uint32_t>>(shape);
 
-    box->AddValue(m_agentId);
-    box->AddValue(m_a);
-    box->AddValue(m_b);
+    box->AddValue(envIndex);
+    box->AddValue(m_a.at(envIndex));
+    box->AddValue(m_b.at(envIndex));
 
     return box;
 }
 
 float
-MultiAgentApbEnv::GetReward()
+MultiAgentApbVecEnv::GetReward(uint32_t envIndex)
 {
     return 0.0;
 }
 
 std::string
-MultiAgentApbEnv::GetExtraInfo()
+MultiAgentApbVecEnv::GetExtraInfo(uint32_t envIndex)
 {
-    return "agent=" + std::to_string(m_agentId);
+    return "agent=" + std::to_string(envIndex);
 }
 
 bool
-MultiAgentApbEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
+MultiAgentApbVecEnv::ExecuteActions(uint32_t envIndex, Ptr<OpenGymDataContainer> action)
 {
     Ptr<OpenGymBoxContainer<uint32_t>> box = DynamicCast<OpenGymBoxContainer<uint32_t>>(action);
-    m_sum = box->GetValue(0);
+    m_sum.at(envIndex) = box->GetValue(0);
     return true;
 }
 
@@ -155,16 +152,12 @@ main(int argc, char* argv[])
     uint32_t numSteps = 5;
 
     CommandLine cmd(__FILE__);
-    cmd.AddValue("numAgents", "Number of independent Gym agents in one ns-3 process", numAgents);
+    cmd.AddValue("numAgents", "Number of vectorized Gym agents in one ns-3 process", numAgents);
     cmd.AddValue("numSteps", "Number of interaction rounds per agent", numSteps);
     cmd.Parse(argc, argv);
 
-    std::vector<Ptr<MultiAgentApbEnv>> agents;
-    agents.reserve(numAgents);
-    for (uint32_t agentId = 0; agentId < numAgents; ++agentId)
-    {
-        agents.push_back(CreateObject<MultiAgentApbEnv>(agentId));
-    }
+    Ptr<MultiAgentApbVecEnv> agents = CreateObject<MultiAgentApbVecEnv>(numAgents);
+    agents->InitializeAll();
 
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::mt19937 gen(seed);
@@ -172,25 +165,26 @@ main(int argc, char* argv[])
 
     for (uint32_t step = 0; step < numSteps; ++step)
     {
-        for (auto agent : agents)
+        for (uint32_t agentId = 0; agentId < numAgents; ++agentId)
         {
-            agent->m_a = distrib(gen);
-            agent->m_b = distrib(gen);
+            uint32_t a = distrib(gen);
+            uint32_t b = distrib(gen);
+            agents->SetOperands(agentId, a, b);
 
-            std::cout << "agent=" << agent->GetAgentId() << ";step=" << step << ";set="
-                      << agent->m_a << "," << agent->m_b << ";" << std::endl;
+            std::cout << "agent=" << agentId << ";step=" << step << ";set=" << a << "," << b << ";"
+                      << std::endl;
+        }
 
-            uint32_t sum = agent->GetAPlusB();
+        agents->NotifyAll();
 
-            std::cout << "agent=" << agent->GetAgentId() << ";step=" << step << ";get="
-                      << sum << ";" << std::endl;
+        for (uint32_t agentId = 0; agentId < numAgents; ++agentId)
+        {
+            std::cout << "agent=" << agentId << ";step=" << step << ";get="
+                      << agents->GetAPlusB(agentId) << ";" << std::endl;
         }
     }
 
-    for (auto agent : agents)
-    {
-        agent->NotifySimulationEnd();
-    }
+    agents->NotifySimulationEndAll();
 
     return 0;
 }
