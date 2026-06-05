@@ -50,8 +50,24 @@ namespace ns3
 static constexpr uint32_t NS3_AI_MSG_HEADER_MAGIC = 0x4E334149; // "N3AI"
 static constexpr uint16_t NS3_AI_MSG_ABI_VERSION = 1;
 
+enum class Ns3AiMsgPeer : uint8_t
+{
+    Cpp = 1,
+    Py = 2
+};
+
+enum class Ns3AiMsgPeerState : uint8_t
+{
+    Initializing = 0,
+    Ready = 1,
+    Sending = 2,
+    Receiving = 3,
+    Finished = 4,
+    Error = 5
+};
+
 /**
- * \brief Structure containing semaphores used in msg interface
+ * \brief Structure containing semaphores and explicit peer states used in msg interface.
  */
 struct Ns3AiMsgSync
 {
@@ -60,6 +76,10 @@ struct Ns3AiMsgSync
     volatile uint8_t m_py2cppEmptyCount{1};
     volatile uint8_t m_py2cppFullCount{0};
     volatile bool m_isFinished{false};
+    volatile uint8_t m_cppState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
+    volatile uint8_t m_pyState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
+    volatile uint8_t m_lastErrorPeer{0};
+    volatile uint8_t m_lastErrorCode{0};
 };
 
 /**
@@ -184,10 +204,6 @@ struct Ns3AiMsgInterfaceNames
 
 /**
  * \brief Complete configuration for one message interface instance.
- *
- * Passing this object to GetInterface decouples per-instance settings from the
- * singleton's legacy mutable defaults, so one process can create interfaces
- * with different creator/vector/finish/size/timeout/name settings.
  */
 struct Ns3AiMsgInterfaceConfig
 {
@@ -231,7 +247,7 @@ class Ns3AiMsgInterfaceBase
 };
 
 /**
- * \brief A template class implementation of the message interface
+ * \brief A template class implementation of the message interface.
  */
 template <typename Cpp2PyMsgType, typename Py2CppMsgType>
 class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
@@ -293,6 +309,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
             m_sync = m_segment->construct<Ns3AiMsgSync>(lockable_name)();
             m_header = m_segment->construct<Ns3AiMsgProtocolHeader>(header_name)();
+            InitializeSyncState();
             InitializeProtocolHeader();
         }
         else
@@ -343,233 +360,362 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             Py2CppMsgAllocator;
     typedef boost::interprocess::vector<Py2CppMsgType, Py2CppMsgAllocator> Py2CppMsgVector;
 
-    /**
-     * Get the struct used in C++ to Python transmission in
-     * struct-based message interface
-     */
     Cpp2PyMsgType* GetCpp2PyStruct()
     {
         assert(!m_useVector);
         return m_cpp2pyStruct;
     };
 
-    /**
-     * Get the struct used in Python to C++ transmission in
-     * struct-based message interface
-     */
     Py2CppMsgType* GetPy2CppStruct()
     {
         assert(!m_useVector);
         return m_py2CppStruct;
     };
 
-    /**
-     * Get the vector used in C++ to Python transmission in
-     * vector-based message interface
-     */
     Cpp2PyMsgVector* GetCpp2PyVector()
     {
         assert(m_useVector);
         return m_cpp2pyVector;
     };
 
-    /**
-     * Get the vector used in Python to C++ transmission in
-     * vector-based message interface
-     */
     Py2CppMsgVector* GetPy2CppVector()
     {
         assert(m_useVector);
         return m_py2cppVector;
     };
 
-    /**
-     * Gets the protocol header stored in shared memory.
-     */
     const Ns3AiMsgProtocolHeader* GetProtocolHeader() const
     {
         return m_header;
     };
 
-    /**
-     * Gets the per-operation synchronization timeout in microseconds.
-     * A value of 0 disables timeout and restores the historical unbounded wait.
-     */
     uint64_t GetSyncTimeoutUs() const
     {
         return m_syncTimeoutUs;
     };
 
-    /**
-     * C++ side starts writing into shared memory, struct-based
-     * or vector-based
-     */
+    Ns3AiMsgPeerState GetCppState() const
+    {
+        return GetPeerState(Ns3AiMsgPeer::Cpp);
+    };
+
+    Ns3AiMsgPeerState GetPyState() const
+    {
+        return GetPeerState(Ns3AiMsgPeer::Py);
+    };
+
     void CppSendBegin()
     {
-        WaitOrThrow(&m_sync->m_cpp2pyEmptyCount, "CppSendBegin", "cpp2py empty slot", true);
+        TransitionPeer(Ns3AiMsgPeer::Cpp,
+                       Ns3AiMsgPeerState::Ready,
+                       Ns3AiMsgPeerState::Sending,
+                       "CppSendBegin");
+        WaitOrThrow(&m_sync->m_cpp2pyEmptyCount,
+                    "CppSendBegin",
+                    "cpp2py empty slot",
+                    true,
+                    Ns3AiMsgPeer::Cpp);
     };
 
-    /**
-     * Non-throwing version of CppSendBegin.
-     */
     bool TryCppSendBegin()
     {
-        return WaitForSync(&m_sync->m_cpp2pyEmptyCount, true);
+        if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
+                               Ns3AiMsgPeerState::Ready,
+                               Ns3AiMsgPeerState::Sending))
+        {
+            return false;
+        }
+        if (!WaitForSync(&m_sync->m_cpp2pyEmptyCount, true))
+        {
+            MarkPeerError(Ns3AiMsgPeer::Cpp, 1);
+            return false;
+        }
+        return true;
     };
 
-    /**
-     * C++ side stops writing into shared memory, struct-based
-     * or vector-based
-     */
     void CppSendEnd()
     {
+        EnsurePeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Sending, "CppSendEnd");
         Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+        SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
     };
 
-    /**
-     * C++ side starts reading from shared memory, struct-based
-     * or vector-based
-     */
     void CppRecvBegin()
     {
-        WaitOrThrow(&m_sync->m_py2cppFullCount, "CppRecvBegin", "py2cpp full slot", true);
+        TransitionPeer(Ns3AiMsgPeer::Cpp,
+                       Ns3AiMsgPeerState::Ready,
+                       Ns3AiMsgPeerState::Receiving,
+                       "CppRecvBegin");
+        WaitOrThrow(&m_sync->m_py2cppFullCount,
+                    "CppRecvBegin",
+                    "py2cpp full slot",
+                    true,
+                    Ns3AiMsgPeer::Cpp);
     };
 
-    /**
-     * Non-throwing version of CppRecvBegin.
-     */
     bool TryCppRecvBegin()
     {
-        return WaitForSync(&m_sync->m_py2cppFullCount, true);
+        if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
+                               Ns3AiMsgPeerState::Ready,
+                               Ns3AiMsgPeerState::Receiving))
+        {
+            return false;
+        }
+        if (!WaitForSync(&m_sync->m_py2cppFullCount, true))
+        {
+            MarkPeerError(Ns3AiMsgPeer::Cpp, 2);
+            return false;
+        }
+        return true;
     };
 
-    /**
-     * C++ side stops reading from shared memory, struct-based
-     * or vector-based
-     */
     void CppRecvEnd()
     {
+        EnsurePeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Receiving, "CppRecvEnd");
         Ns3AiSemaphore::sem_post(&m_sync->m_py2cppEmptyCount);
+        SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
     };
 
-    /**
-     * C++ side sets the overall status to finished when
-     * the simulation is over.
-     *
-     * Finish is an out-of-band control flag. It must not wait for or publish
-     * a cpp2py data slot, otherwise cleanup can deadlock behind unread data.
-     */
     void CppSetFinished()
     {
         assert(m_handleFinish);
         TryCppSetFinished();
     };
 
-    /**
-     * Non-throwing version of CppSetFinished.
-     */
     bool TryCppSetFinished()
     {
         assert(m_handleFinish);
         if (m_isFinished || m_sync->m_isFinished)
         {
             m_isFinished = true;
+            SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Finished);
             return true;
         }
 
         m_isFinished = true;
         m_sync->m_isFinished = true;
+        SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Finished);
         __sync_synchronize();
         return true;
     };
 
-    /**
-     * Python side starts reading from shared memory, struct-based
-     * or vector-based
-     */
     void PyRecvBegin()
     {
         if (!TryPyRecvBegin())
         {
-            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag");
+            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag", Ns3AiMsgPeer::Py);
         }
     };
 
-    /**
-     * Non-throwing version of PyRecvBegin.
-     */
     bool TryPyRecvBegin()
     {
         m_pyRecvHasCpp2PySlot = false;
+        if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
+                               Ns3AiMsgPeerState::Ready,
+                               Ns3AiMsgPeerState::Receiving))
+        {
+            return false;
+        }
         if (!WaitForCpp2PyDataOrFinish())
         {
+            MarkPeerError(Ns3AiMsgPeer::Py, 3);
             return false;
         }
         if (m_handleFinish)
         {
             m_isFinished = m_sync->m_isFinished;
         }
+        if (m_isFinished && !m_pyRecvHasCpp2PySlot)
+        {
+            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
+        }
         return true;
     };
 
-    /**
-     * Python side stops reading from shared memory, struct-based
-     * or vector-based
-     */
     void PyRecvEnd()
     {
         if (m_pyRecvHasCpp2PySlot)
         {
+            EnsurePeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Receiving, "PyRecvEnd");
             Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyEmptyCount);
             m_pyRecvHasCpp2PySlot = false;
+            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
         }
     };
 
-    /**
-     * Python side starts writing into shared memory, struct-based
-     * or vector-based
-     */
     void PySendBegin()
     {
-        WaitOrThrow(&m_sync->m_py2cppEmptyCount, "PySendBegin", "py2cpp empty slot", true);
+        TransitionPeer(Ns3AiMsgPeer::Py,
+                       Ns3AiMsgPeerState::Ready,
+                       Ns3AiMsgPeerState::Sending,
+                       "PySendBegin");
+        WaitOrThrow(&m_sync->m_py2cppEmptyCount,
+                    "PySendBegin",
+                    "py2cpp empty slot",
+                    true,
+                    Ns3AiMsgPeer::Py);
     };
 
-    /**
-     * Non-throwing version of PySendBegin.
-     */
     bool TryPySendBegin()
     {
+        if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
+                               Ns3AiMsgPeerState::Ready,
+                               Ns3AiMsgPeerState::Sending))
+        {
+            return false;
+        }
         if (!WaitForSync(&m_sync->m_py2cppEmptyCount, true))
         {
             if (m_handleFinish)
             {
                 m_isFinished = m_sync->m_isFinished;
             }
+            MarkPeerError(Ns3AiMsgPeer::Py, 4);
             return false;
         }
         return true;
     };
 
-    /**
-     * Python side stops writing into shared memory, struct-based
-     * or vector-based
-     */
     void PySendEnd()
     {
+        EnsurePeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Sending, "PySendEnd");
         Ns3AiSemaphore::sem_post(&m_sync->m_py2cppFullCount);
+        SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
     };
 
-    /**
-     * Python side gets whether the simulation is over
-     */
     bool PyGetFinished()
     {
         assert(m_handleFinish);
         m_isFinished = m_sync->m_isFinished;
+        if (m_isFinished)
+        {
+            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
+        }
         return m_isFinished;
     };
 
   private:
+    static uint8_t AtomicRead8(const volatile uint8_t* mem)
+    {
+        return __atomic_load_n(const_cast<const uint8_t*>(mem), __ATOMIC_ACQUIRE);
+    };
+
+    static void AtomicStore8(volatile uint8_t* mem, uint8_t value)
+    {
+        __atomic_store_n(const_cast<uint8_t*>(mem), value, __ATOMIC_RELEASE);
+    };
+
+    static const char* PeerName(Ns3AiMsgPeer peer)
+    {
+        switch (peer)
+        {
+        case Ns3AiMsgPeer::Cpp:
+            return "C++";
+        case Ns3AiMsgPeer::Py:
+            return "Python";
+        }
+        return "unknown";
+    };
+
+    static const char* StateName(Ns3AiMsgPeerState state)
+    {
+        switch (state)
+        {
+        case Ns3AiMsgPeerState::Initializing:
+            return "initializing";
+        case Ns3AiMsgPeerState::Ready:
+            return "ready";
+        case Ns3AiMsgPeerState::Sending:
+            return "sending";
+        case Ns3AiMsgPeerState::Receiving:
+            return "receiving";
+        case Ns3AiMsgPeerState::Finished:
+            return "finished";
+        case Ns3AiMsgPeerState::Error:
+            return "error";
+        }
+        return "unknown";
+    };
+
+    volatile uint8_t* PeerStatePtr(Ns3AiMsgPeer peer) const
+    {
+        return (peer == Ns3AiMsgPeer::Cpp) ? &m_sync->m_cppState : &m_sync->m_pyState;
+    };
+
+    Ns3AiMsgPeerState GetPeerState(Ns3AiMsgPeer peer) const
+    {
+        return static_cast<Ns3AiMsgPeerState>(AtomicRead8(PeerStatePtr(peer)));
+    };
+
+    void SetPeerState(Ns3AiMsgPeer peer, Ns3AiMsgPeerState state) const
+    {
+        AtomicStore8(PeerStatePtr(peer), static_cast<uint8_t>(state));
+    };
+
+    void InitializeSyncState() const
+    {
+        SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
+        SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
+        AtomicStore8(&m_sync->m_lastErrorPeer, 0);
+        AtomicStore8(&m_sync->m_lastErrorCode, 0);
+        __sync_synchronize();
+    };
+
+    bool TryTransitionPeer(Ns3AiMsgPeer peer,
+                           Ns3AiMsgPeerState expected,
+                           Ns3AiMsgPeerState next) const
+    {
+        volatile uint8_t* state = PeerStatePtr(peer);
+        uint8_t current = static_cast<uint8_t>(expected);
+        return __atomic_compare_exchange_n(const_cast<uint8_t*>(state),
+                                           &current,
+                                           static_cast<uint8_t>(next),
+                                           false,
+                                           __ATOMIC_ACQ_REL,
+                                           __ATOMIC_ACQUIRE);
+    };
+
+    void TransitionPeer(Ns3AiMsgPeer peer,
+                        Ns3AiMsgPeerState expected,
+                        Ns3AiMsgPeerState next,
+                        const char* operation) const
+    {
+        if (!TryTransitionPeer(peer, expected, next))
+        {
+            ThrowInvalidState(peer, operation, expected, GetPeerState(peer));
+        }
+    };
+
+    void EnsurePeerState(Ns3AiMsgPeer peer, Ns3AiMsgPeerState expected, const char* operation) const
+    {
+        const Ns3AiMsgPeerState actual = GetPeerState(peer);
+        if (actual != expected)
+        {
+            ThrowInvalidState(peer, operation, expected, actual);
+        }
+    };
+
+    void MarkPeerError(Ns3AiMsgPeer peer, uint8_t code) const
+    {
+        SetPeerState(peer, Ns3AiMsgPeerState::Error);
+        AtomicStore8(&m_sync->m_lastErrorPeer, static_cast<uint8_t>(peer));
+        AtomicStore8(&m_sync->m_lastErrorCode, code);
+        __sync_synchronize();
+    };
+
+    [[noreturn]] void ThrowInvalidState(Ns3AiMsgPeer peer,
+                                        const char* operation,
+                                        Ns3AiMsgPeerState expected,
+                                        Ns3AiMsgPeerState actual) const
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai message interface invalid synchronization state in " << operation << " for "
+            << PeerName(peer) << " peer: expected " << StateName(expected) << ", got "
+            << StateName(actual) << ". Check send/receive ordering and avoid reusing a shared-memory "
+            << "segment after an abnormal peer exit without recreating the session.";
+        throw std::runtime_error(oss.str());
+    };
+
     bool WaitForSync(volatile uint8_t* counter, bool abortOnFinished)
     {
         const volatile bool* abortFlag =
@@ -673,19 +819,23 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     void WaitOrThrow(volatile uint8_t* counter,
                      const char* operation,
                      const char* waitTarget,
-                     bool abortOnFinished)
+                     bool abortOnFinished,
+                     Ns3AiMsgPeer peer)
     {
         if (!WaitForSync(counter, abortOnFinished))
         {
-            ThrowSyncFailure(operation, waitTarget);
+            MarkPeerError(peer, 5);
+            ThrowSyncFailure(operation, waitTarget, peer);
         }
     };
 
-    [[noreturn]] void ThrowSyncFailure(const char* operation, const char* waitTarget) const
+    [[noreturn]] void ThrowSyncFailure(const char* operation,
+                                       const char* waitTarget,
+                                       Ns3AiMsgPeer peer) const
     {
         std::ostringstream oss;
         oss << "ns3-ai message interface synchronization failed in " << operation
-            << " while waiting for " << waitTarget << ". ";
+            << " for " << PeerName(peer) << " peer while waiting for " << waitTarget << ". ";
         if (m_handleFinish && m_sync->m_isFinished)
         {
             oss << "The peer has already marked the shared session as finished. ";
@@ -698,7 +848,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             oss << "The wait was aborted. ";
         }
-        oss << "Check that C++ and Python send/recv calls are paired in the same order. "
+        oss << "Current states: C++=" << StateName(GetPeerState(Ns3AiMsgPeer::Cpp))
+            << ", Python=" << StateName(GetPeerState(Ns3AiMsgPeer::Py)) << ". "
+            << "Check that C++ and Python send/recv calls are paired in the same order. "
             << "Increase the timeout with Ns3AiMsgInterface::SetSyncTimeoutUs(), "
             << "or set it to 0 to restore unbounded waiting for intentionally long inference.";
         throw std::runtime_error(oss.str());
@@ -748,9 +900,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
 {
   public:
-    /**
-     * Builds deterministic object names for one independent shared-memory namespace.
-     */
     static Ns3AiMsgInterfaceNames MakeNames(const std::string& prefix)
     {
         return Ns3AiMsgInterfaceNames{prefix + ".seg",
@@ -760,98 +909,56 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
                                       prefix + ".header"};
     };
 
-    /**
-     * Returns the singleton's legacy default configuration.
-     */
     Ns3AiMsgInterfaceConfig GetDefaultConfig() const
     {
         return m_defaultConfig;
     };
 
-    /**
-     * Replaces the singleton's legacy default configuration.
-     */
     void SetDefaultConfig(const Ns3AiMsgInterfaceConfig& config)
     {
         m_defaultConfig = config;
     };
 
-    /**
-     * Sets if this side (C++ or Python) is the memory creator.
-     * Configuration on two sides must be different
-     */
     void SetIsMemoryCreator(bool isMemoryCreator)
     {
         m_defaultConfig.m_isMemoryCreator = isMemoryCreator;
     };
 
-    /**
-     * Sets if both C++ and Python sides use vector. Configuration on
-     * two sides must be same
-     */
     void SetUseVector(bool useVector)
     {
         m_defaultConfig.m_useVector = useVector;
     };
 
-    /**
-     * Sets if both C++ and Python sides handle finish. Configuration on
-     * two sides must be same
-     */
     void SetHandleFinish(bool handleFinish)
     {
         m_defaultConfig.m_handleFinish = handleFinish;
     };
 
-    /**
-     * Sets shared memory segment size, only valid for
-     * the shared memory creator. Normally the default
-     * size is OK.
-     */
     void SetMemorySize(uint32_t size)
     {
         m_defaultConfig.m_size = size;
     };
 
-    /**
-     * Sets per-operation synchronization timeout in microseconds.
-     * A value of 0 disables timeout and restores the historical unbounded wait.
-     */
     void SetSyncTimeoutUs(uint64_t timeoutUs)
     {
         m_defaultConfig.m_syncTimeoutUs = timeoutUs;
     };
 
-    /**
-     * Sets per-operation synchronization timeout in milliseconds.
-     * A value of 0 disables timeout and restores the historical unbounded wait.
-     */
     void SetSyncTimeoutMs(uint64_t timeoutMs)
     {
         m_defaultConfig.m_syncTimeoutUs = timeoutMs * 1000;
     };
 
-    /**
-     * Gets per-operation synchronization timeout in microseconds.
-     */
     uint64_t GetSyncTimeoutUs() const
     {
         return m_defaultConfig.m_syncTimeoutUs;
     };
 
-    /**
-     * Sets the payload schemas used for subsequent legacy GetInterface calls.
-     */
     void SetSchemas(const Ns3AiMsgSchema& cpp2pySchema, const Ns3AiMsgSchema& py2cppSchema)
     {
         m_defaultConfig.SetSchemas(cpp2pySchema, py2cppSchema);
     };
 
-    /**
-     * Sets the names of the named objects. See Boost's
-     * documentation for details. Normally the default
-     * names are OK.
-     */
     void SetNames(std::string segmentName,
                   std::string cpp2pyMsgName,
                   std::string py2cppMsgName,
@@ -864,9 +971,6 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
                  lockableName + ".header");
     };
 
-    /**
-     * Sets the names of the named objects, including the protocol header.
-     */
     void SetNames(std::string segmentName,
                   std::string cpp2pyMsgName,
                   std::string py2cppMsgName,
@@ -880,29 +984,17 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
                                                          headerName};
     };
 
-    /**
-     * Sets all names from one namespace prefix. Useful for multiple agents or
-     * parallel ns-3 subprocesses, where each instance must use isolated names.
-     */
     void SetNamesFromPrefix(const std::string& prefix)
     {
         m_defaultConfig.m_names = MakeNames(prefix);
     };
 
-    /**
-     * Gets the impl which has semaphore (synchronization) methods.
-     * The old no-argument API remains available and uses the current default config.
-     */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface()
     {
         return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(m_defaultConfig, "default");
     };
 
-    /**
-     * Gets an interface under deterministic names produced from an instance id,
-     * using the current default config for non-name settings.
-     */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(const std::string& instanceId)
     {
@@ -911,10 +1003,6 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(config, instanceId);
     };
 
-    /**
-     * Gets an interface under explicitly supplied shared-memory object names,
-     * using the current default config for non-name settings.
-     */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(
         const std::string& segmentName,
@@ -932,10 +1020,6 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(config, instanceId);
     };
 
-    /**
-     * Gets an interface under explicitly supplied shared-memory object names,
-     * including the protocol header name.
-     */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(
         const Ns3AiMsgInterfaceNames& names,
@@ -946,11 +1030,6 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(config, instanceId);
     };
 
-    /**
-     * Gets an interface from an explicit per-instance config.
-     * This avoids mutating singleton defaults when different interfaces in one
-     * process need different settings.
-     */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(
         const Ns3AiMsgInterfaceConfig& config,
