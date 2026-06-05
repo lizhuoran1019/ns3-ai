@@ -83,15 +83,28 @@ class Ns3Env(gym.Env):
 
             if boxContainerPb.dtype == pb.INT:
                 data = boxContainerPb.intData
+                dtype = np.int_
             elif boxContainerPb.dtype == pb.UINT:
                 data = boxContainerPb.uintData
+                dtype = np.uint
             elif boxContainerPb.dtype == pb.DOUBLE:
                 data = boxContainerPb.doubleData
+                dtype = np.float64
             else:
                 data = boxContainerPb.floatData
+                dtype = np.float32
 
-            # TODO: reshape using shape info
-            data = np.array(data)
+            data = np.array(data, dtype=dtype)
+            shape = tuple(boxContainerPb.shape)
+            if shape:
+                expected_size = int(np.prod(shape, dtype=np.int64))
+                if data.size != expected_size:
+                    raise ValueError(
+                        "ns3-ai Gym Box data has {} elements but shape {} requires {}".format(
+                            data.size, shape, expected_size
+                        )
+                    )
+                data = data.reshape(shape)
             return data
         elif dataContainerPb.type == pb.Tuple:
             tupleDataPb = pb.TupleDataContainer()
