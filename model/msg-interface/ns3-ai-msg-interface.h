@@ -4,17 +4,6 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation;
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * Authors:  Muyuan Shen <muyuan_shen@hust.edu.cn>
  */
 
 #ifndef NS3_AI_MSG_INTERFACE_H
@@ -47,7 +36,7 @@
 namespace ns3
 {
 
-static constexpr uint32_t NS3_AI_MSG_HEADER_MAGIC = 0x4E334149; // "N3AI"
+static constexpr uint32_t NS3_AI_MSG_HEADER_MAGIC = 0x4E334149;
 static constexpr uint16_t NS3_AI_MSG_ABI_VERSION = 1;
 
 enum class Ns3AiMsgPeer : uint8_t
@@ -66,9 +55,6 @@ enum class Ns3AiMsgPeerState : uint8_t
     Error = 5
 };
 
-/**
- * \brief Structure containing semaphores and explicit peer states used in msg interface.
- */
 struct Ns3AiMsgSync
 {
     volatile uint8_t m_cpp2pyEmptyCount{1};
@@ -82,9 +68,6 @@ struct Ns3AiMsgSync
     volatile uint8_t m_lastErrorCode{0};
 };
 
-/**
- * \brief Fixed protocol metadata stored in shared memory next to payload objects.
- */
 struct Ns3AiMsgProtocolHeader
 {
     volatile uint32_t m_magic{NS3_AI_MSG_HEADER_MAGIC};
@@ -98,9 +81,6 @@ struct Ns3AiMsgProtocolHeader
     volatile uint64_t m_py2cppSchemaHash{0};
 };
 
-/**
- * \brief Runtime field types used by schema descriptors and generated bindings.
- */
 enum class Ns3AiMsgFieldType : uint16_t
 {
     Bool,
@@ -117,9 +97,6 @@ enum class Ns3AiMsgFieldType : uint16_t
     RawBytes
 };
 
-/**
- * \brief One field in a message schema.
- */
 struct Ns3AiMsgField
 {
     std::string m_name;
@@ -129,9 +106,6 @@ struct Ns3AiMsgField
     std::size_t m_count{1};
 };
 
-/**
- * \brief Runtime schema descriptor for one payload type.
- */
 struct Ns3AiMsgSchema
 {
     std::string m_name;
@@ -140,6 +114,22 @@ struct Ns3AiMsgSchema
     uint32_t m_size{0};
     std::vector<Ns3AiMsgField> m_fields;
 };
+
+template <typename PayloadType>
+struct Ns3AiMsgTypeSchemaDefaults
+{
+    static constexpr uint64_t SchemaHash = 0;
+    static constexpr uint32_t SchemaVersion = 0;
+};
+
+#ifdef NS3_NS3_AI_GYM_MSG_H
+template <>
+struct Ns3AiMsgTypeSchemaDefaults<::Ns3AiGymMsg>
+{
+    static constexpr uint64_t SchemaHash = NS3_AI_GYM_MSG_SCHEMA_HASH;
+    static constexpr uint32_t SchemaVersion = NS3_AI_GYM_MSG_SCHEMA_VERSION;
+};
+#endif
 
 inline uint64_t
 Ns3AiMsgHashBytes(uint64_t hash, const void* data, std::size_t size)
@@ -166,7 +156,6 @@ ComputeNs3AiMsgSchemaHash(const Ns3AiMsgSchema& schema)
     hash = Ns3AiMsgHashString(hash, schema.m_name);
     hash = Ns3AiMsgHashBytes(hash, &schema.m_version, sizeof(schema.m_version));
     hash = Ns3AiMsgHashBytes(hash, &schema.m_size, sizeof(schema.m_size));
-
     for (const auto& field : schema.m_fields)
     {
         const uint16_t type = static_cast<uint16_t>(field.m_type);
@@ -190,9 +179,6 @@ MakeNs3AiMsgSchema(std::string name,
     return schema;
 }
 
-/**
- * \brief Names of the shared-memory objects used by one msg interface instance.
- */
 struct Ns3AiMsgInterfaceNames
 {
     std::string m_segmentName;
@@ -202,9 +188,6 @@ struct Ns3AiMsgInterfaceNames
     std::string m_headerName{"My Header"};
 };
 
-/**
- * \brief Complete configuration for one message interface instance.
- */
 struct Ns3AiMsgInterfaceConfig
 {
     bool m_isMemoryCreator{false};
@@ -237,18 +220,12 @@ struct Ns3AiMsgInterfaceConfig
     }
 };
 
-/**
- * \brief Type-erased base class for keeping typed message interfaces in one registry.
- */
 class Ns3AiMsgInterfaceBase
 {
   public:
     virtual ~Ns3AiMsgInterfaceBase() = default;
 };
 
-/**
- * \brief A template class implementation of the message interface.
- */
 template <typename Cpp2PyMsgType, typename Py2CppMsgType>
 class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 {
@@ -283,10 +260,14 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
           m_segName(segment_name),
           m_headerName(header_name),
           m_syncTimeoutUs(sync_timeout_us),
-          m_cpp2pySchemaHash(cpp2py_schema_hash),
-          m_py2cppSchemaHash(py2cpp_schema_hash),
-          m_cpp2pySchemaVersion(cpp2py_schema_version),
-          m_py2cppSchemaVersion(py2cpp_schema_version),
+          m_cpp2pySchemaHash(cpp2py_schema_hash != 0 ? cpp2py_schema_hash :
+                                                     Ns3AiMsgTypeSchemaDefaults<Cpp2PyMsgType>::SchemaHash),
+          m_py2cppSchemaHash(py2cpp_schema_hash != 0 ? py2cpp_schema_hash :
+                                                     Ns3AiMsgTypeSchemaDefaults<Py2CppMsgType>::SchemaHash),
+          m_cpp2pySchemaVersion(cpp2py_schema_version != 0 ? cpp2py_schema_version :
+                                                           Ns3AiMsgTypeSchemaDefaults<Cpp2PyMsgType>::SchemaVersion),
+          m_py2cppSchemaVersion(py2cpp_schema_version != 0 ? py2cpp_schema_version :
+                                                           Ns3AiMsgTypeSchemaDefaults<Py2CppMsgType>::SchemaVersion),
           m_isFinished(false),
           m_pyRecvHasCpp2PySlot(false)
     {
@@ -342,12 +323,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             boost::interprocess::shared_memory_object::remove(m_segName.c_str());
         }
-        else
+        else if (m_handleFinish && !m_isFinished)
         {
-            if (m_handleFinish && !m_isFinished)
-            {
-                TryCppSetFinished();
-            }
+            TryCppSetFinished();
         }
     };
 
@@ -491,7 +469,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Finished);
             return true;
         }
-
         m_isFinished = true;
         m_sync->m_isFinished = true;
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Finished);
@@ -607,14 +584,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     static const char* PeerName(Ns3AiMsgPeer peer)
     {
-        switch (peer)
-        {
-        case Ns3AiMsgPeer::Cpp:
-            return "C++";
-        case Ns3AiMsgPeer::Py:
-            return "Python";
-        }
-        return "unknown";
+        return peer == Ns3AiMsgPeer::Cpp ? "C++" : "Python";
     };
 
     static const char* StateName(Ns3AiMsgPeerState state)
@@ -727,7 +697,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     {
         const auto start = std::chrono::steady_clock::now();
         uint32_t attempts = 0;
-
         while (true)
         {
             if (Ns3AiSemaphore::sem_try_wait(&m_sync->m_cpp2pyFullCount))
@@ -735,14 +704,12 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                 m_pyRecvHasCpp2PySlot = true;
                 return true;
             }
-
             if (m_handleFinish && m_sync->m_isFinished)
             {
                 m_isFinished = true;
                 m_pyRecvHasCpp2PySlot = false;
                 return true;
             }
-
             if (m_syncTimeoutUs > 0)
             {
                 const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -752,7 +719,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                     return false;
                 }
             }
-
             Backoff(attempts++);
         }
     };
@@ -872,12 +838,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
     std::unique_ptr<boost::interprocess::managed_shared_memory> m_segment;
-
     Cpp2PyMsgType* m_cpp2pyStruct;
     Py2CppMsgType* m_py2CppStruct;
     Cpp2PyMsgVector* m_cpp2pyVector;
     Py2CppMsgVector* m_py2cppVector;
-
     Ns3AiMsgSync* m_sync;
     Ns3AiMsgProtocolHeader* m_header;
     const bool m_isCreator;
@@ -894,9 +858,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     bool m_pyRecvHasCpp2PySlot;
 };
 
-/**
- * \brief The message interface, a singleton class with named interface instances.
- */
 class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
 {
   public:
@@ -1042,7 +1003,6 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         {
             return static_cast<Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>*>(iter->second.get());
         }
-
         auto interface = std::make_unique<Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>>(
             config.m_isMemoryCreator,
             config.m_useVector,
