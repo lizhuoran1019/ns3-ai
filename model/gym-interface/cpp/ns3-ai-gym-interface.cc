@@ -163,7 +163,7 @@ OpenGymInterface::OpenGymInterface()
       m_nextSequence(1),
       m_pendingInitSequence(0),
       m_pendingStateSequence(0),
-      m_msgNames{"My Seg", "My Cpp to Python Msg", "My Python to Cpp Msg", "My Lockable"}
+      m_msgNames{"My Seg", "My Cpp to Python Msg", "My Python to Cpp Msg", "My Lockable", "My Header"}
 {
 }
 
@@ -197,11 +197,8 @@ void
 OpenGymInterface::SetSharedMemoryPrefix(const std::string& sharedMemoryPrefix)
 {
     NS_LOG_FUNCTION(this << sharedMemoryPrefix);
-    Ns3AiMsgInterfaceNames names = Ns3AiMsgInterface::MakeNames(sharedMemoryPrefix);
-    SetSharedMemoryNames(names.m_segmentName,
-                         names.m_cpp2pyMsgName,
-                         names.m_py2cppMsgName,
-                         names.m_lockableName);
+    assert(!m_msgInterface && "shared-memory names must be set before the interface is opened");
+    m_msgNames = Ns3AiMsgInterface::MakeNames(sharedMemoryPrefix);
 }
 
 void
@@ -212,7 +209,7 @@ OpenGymInterface::SetSharedMemoryNames(std::string segmentName,
 {
     NS_LOG_FUNCTION(this << segmentName << cpp2pyMsgName << py2cppMsgName << lockableName);
     assert(!m_msgInterface && "shared-memory names must be set before the interface is opened");
-    m_msgNames = Ns3AiMsgInterfaceNames{segmentName, cpp2pyMsgName, py2cppMsgName, lockableName};
+    m_msgNames = Ns3AiMsgInterfaceNames{segmentName, cpp2pyMsgName, py2cppMsgName, lockableName, "My Header"};
 }
 
 void
@@ -236,7 +233,9 @@ OpenGymInterface::GetMsgInterface()
             m_msgNames.m_segmentName.c_str(),
             m_msgNames.m_cpp2pyMsgName.c_str(),
             m_msgNames.m_py2cppMsgName.c_str(),
-            m_msgNames.m_lockableName.c_str());
+            m_msgNames.m_lockableName.c_str(),
+            Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::DEFAULT_SYNC_TIMEOUT_US,
+            m_msgNames.m_headerName.c_str());
     }
     return m_msgInterface.get();
 }
