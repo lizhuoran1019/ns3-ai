@@ -29,6 +29,7 @@
 #include <boost/interprocess/managed_shared_memory.hpp>
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -36,6 +37,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <typeinfo>
 #include <unordered_map>
 #include <vector>
@@ -105,7 +107,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
           m_handleFinish(handle_finish),
           m_segName(segment_name),
           m_syncTimeoutUs(sync_timeout_us),
-          m_isFinished(false)
+          m_isFinished(false),
+          m_pyRecvHasCpp2PySlot(false)
     {
         using namespace boost::interprocess;
         if (m_isCreator)
@@ -172,8 +175,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             Py2CppMsgAllocator;
     typedef boost::interprocess::vector<Py2CppMsgType, Py2CppMsgAllocator> Py2CppMsgVector;
 
-    // use structure for the simple case:
-
     /**
      * Get the struct used in C++ to Python transmission in
      * struct-based message interface
@@ -193,8 +194,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         assert(!m_useVector);
         return m_py2CppStruct;
     };
-
-    // use vector for passing multiple structures at once:
 
     /**
      * Get the vector used in C++ to Python transmission in
@@ -224,8 +223,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     {
         return m_syncTimeoutUs;
     };
-
-    // for C++ side:
 
     /**
      * C++ side starts writing into shared memory, struct-based
@@ -281,15 +278,15 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     /**
      * C++ side sets the overall status to finished when
-     * the simulation is over
+     * the simulation is over.
+     *
+     * Finish is an out-of-band control flag. It must not wait for or publish
+     * a cpp2py data slot, otherwise cleanup can deadlock behind unread data.
      */
     void CppSetFinished()
     {
         assert(m_handleFinish);
-        if (!TryCppSetFinished())
-        {
-            ThrowSyncFailure("CppSetFinished", "cpp2py empty slot");
-        }
+        TryCppSetFinished();
     };
 
     /**
@@ -298,23 +295,17 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     bool TryCppSetFinished()
     {
         assert(m_handleFinish);
-        if (m_isFinished)
+        if (m_isFinished || m_sync->m_isFinished)
         {
+            m_isFinished = true;
             return true;
-        }
-
-        if (!Ns3AiSemaphore::sem_wait(&m_sync->m_cpp2pyEmptyCount, m_syncTimeoutUs))
-        {
-            return false;
         }
 
         m_isFinished = true;
         m_sync->m_isFinished = true;
-        Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+        __sync_synchronize();
         return true;
     };
-
-    // for Python side:
 
     /**
      * Python side starts reading from shared memory, struct-based
@@ -324,7 +315,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     {
         if (!TryPyRecvBegin())
         {
-            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot");
+            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag");
         }
     };
 
@@ -333,12 +324,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     bool TryPyRecvBegin()
     {
-        if (!WaitForSync(&m_sync->m_cpp2pyFullCount, false))
+        m_pyRecvHasCpp2PySlot = false;
+        if (!WaitForCpp2PyDataOrFinish())
         {
-            if (m_handleFinish)
-            {
-                m_isFinished = m_sync->m_isFinished;
-            }
             return false;
         }
         if (m_handleFinish)
@@ -354,7 +342,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     void PyRecvEnd()
     {
-        Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyEmptyCount);
+        if (m_pyRecvHasCpp2PySlot)
+        {
+            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyEmptyCount);
+            m_pyRecvHasCpp2PySlot = false;
+        }
     };
 
     /**
@@ -397,6 +389,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     bool PyGetFinished()
     {
         assert(m_handleFinish);
+        m_isFinished = m_sync->m_isFinished;
         return m_isFinished;
     };
 
@@ -406,6 +399,40 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         const volatile bool* abortFlag =
             (abortOnFinished && m_handleFinish) ? &m_sync->m_isFinished : nullptr;
         return Ns3AiSemaphore::sem_wait(counter, m_syncTimeoutUs, abortFlag);
+    };
+
+    bool WaitForCpp2PyDataOrFinish()
+    {
+        const auto start = std::chrono::steady_clock::now();
+        uint32_t attempts = 0;
+
+        while (true)
+        {
+            if (Ns3AiSemaphore::sem_try_wait(&m_sync->m_cpp2pyFullCount))
+            {
+                m_pyRecvHasCpp2PySlot = true;
+                return true;
+            }
+
+            if (m_handleFinish && m_sync->m_isFinished)
+            {
+                m_isFinished = true;
+                m_pyRecvHasCpp2PySlot = false;
+                return true;
+            }
+
+            if (m_syncTimeoutUs > 0)
+            {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - start);
+                if (static_cast<uint64_t>(elapsed.count()) >= m_syncTimeoutUs)
+                {
+                    return false;
+                }
+            }
+
+            Backoff(attempts++);
+        }
     };
 
     void WaitOrThrow(volatile uint8_t* counter,
@@ -442,6 +469,21 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         throw std::runtime_error(oss.str());
     };
 
+    static void Backoff(uint32_t attempts)
+    {
+        if (attempts < 64)
+        {
+            std::this_thread::yield();
+            return;
+        }
+        if (attempts < 1024)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    };
+
     std::unique_ptr<boost::interprocess::managed_shared_memory> m_segment;
 
     Cpp2PyMsgType* m_cpp2pyStruct;
@@ -456,6 +498,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     const std::string m_segName;
     const uint64_t m_syncTimeoutUs;
     bool m_isFinished;
+    bool m_pyRecvHasCpp2PySlot;
 };
 
 /**
