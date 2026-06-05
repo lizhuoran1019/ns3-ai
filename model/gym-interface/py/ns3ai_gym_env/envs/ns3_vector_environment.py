@@ -45,7 +45,9 @@ class Ns3VecEnv:
                              shmSize=shmSize,
                              envId=env_id,
                              shmPrefix=f"{shmPrefixBase}-{env_id}",
-                             env=worker_env)
+                             env=worker_env,
+                             autoStart=False,
+                             showOutput=show_output)
             self.envs.append(ns3_env)
 
         if launch_simulation:
