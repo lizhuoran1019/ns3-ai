@@ -1,0 +1,88 @@
+import gymnasium as gym
+
+from ns3ai_gym_env.envs.ns3_environment import Ns3Env
+
+
+class Ns3VecEnv:
+    """A synchronous vectorized ns-3 Gymnasium environment.
+
+    This class owns a batch of ``Ns3Env`` workers and exposes vectorized ``reset``
+    and ``step`` methods so callers do not have to hand-roll one shared-memory
+    channel per agent. Each worker still has an isolated transport namespace, but
+    that is an implementation detail hidden behind a single vector-env API.
+    """
+
+    def __init__(self,
+                 targetName,
+                 ns3Path,
+                 num_envs,
+                 ns3Settings=None,
+                 shmSize=4096,
+                 shmPrefixBase="ns3ai-gym-vec-env",
+                 env=None,
+                 make_env=None):
+        if num_envs <= 0:
+            raise ValueError("num_envs must be positive")
+
+        self.num_envs = int(num_envs)
+        self.single_observation_space = None
+        self.single_action_space = None
+        self.observation_space = None
+        self.action_space = None
+        self.envs = []
+
+        for env_id in range(self.num_envs):
+            worker_env = make_env(env_id) if make_env is not None else env
+            worker_settings = dict(ns3Settings or {})
+            worker_settings.setdefault("numEnvs", self.num_envs)
+            worker_settings.setdefault("envId", env_id)
+
+            ns3_env = Ns3Env(targetName=targetName,
+                             ns3Path=ns3Path,
+                             ns3Settings=worker_settings,
+                             shmSize=shmSize,
+                             envId=env_id,
+                             shmPrefix=f"{shmPrefixBase}-{env_id}",
+                             env=worker_env)
+            self.envs.append(ns3_env)
+
+        self.single_observation_space = self.envs[0].observation_space
+        self.single_action_space = self.envs[0].action_space
+        self.observation_space = gym.spaces.Tuple(tuple(env.observation_space for env in self.envs))
+        self.action_space = gym.spaces.Tuple(tuple(env.action_space for env in self.envs))
+
+    def reset(self, seed=None, options=None):
+        observations = []
+        infos = []
+        for idx, env in enumerate(self.envs):
+            env_seed = None if seed is None else seed + idx
+            obs, info = env.reset(seed=env_seed, options=options)
+            observations.append(obs)
+            infos.append(info)
+        return tuple(observations), tuple(infos)
+
+    def step(self, actions):
+        if len(actions) != self.num_envs:
+            raise ValueError(f"expected {self.num_envs} actions, got {len(actions)}")
+
+        observations = []
+        rewards = []
+        terminated = []
+        truncated = []
+        infos = []
+        for env, action in zip(self.envs, actions):
+            obs, reward, done, trunc, info = env.step(action)
+            observations.append(obs)
+            rewards.append(reward)
+            terminated.append(done)
+            truncated.append(trunc)
+            infos.append(info)
+
+        return tuple(observations), tuple(rewards), tuple(terminated), tuple(truncated), tuple(infos)
+
+    def close(self):
+        for env in self.envs:
+            env.close()
+
+    def get_random_action(self):
+        return tuple(env.get_random_action() for env in self.envs)
