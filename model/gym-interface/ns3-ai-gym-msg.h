@@ -34,6 +34,16 @@ struct Ns3AiGymMsg
 {
     uint8_t buffer[MSG_BUFFER_SIZE];
     uint32_t size;
+#ifdef __cplusplus
+    enum : uint32_t
+    {
+        kNs3AiSchemaVersion = NS3_AI_GYM_MSG_SCHEMA_VERSION
+    };
+    enum : uint64_t
+    {
+        kNs3AiSchemaHash = NS3_AI_GYM_MSG_SCHEMA_HASH
+    };
+#endif
 };
 
 #endif // NS3_NS3_AI_GYM_MSG_H
