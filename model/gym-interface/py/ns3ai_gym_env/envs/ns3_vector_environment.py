@@ -67,13 +67,13 @@ class Ns3VecEnv:
         self.action_space = gym.spaces.Tuple(tuple(env.action_space for env in self.envs))
 
     def reset(self, seed=None, options=None):
+        if any(env.envDirty for env in self.envs):
+            raise RuntimeError("Ns3VecEnv cannot reset individual lanes after stepping; create a new vector env")
         observations = []
         infos = []
-        for idx, env in enumerate(self.envs):
-            env_seed = None if seed is None else seed + idx
-            obs, info = env.reset(seed=env_seed, options=options)
-            observations.append(obs)
-            infos.append(info)
+        for env in self.envs:
+            observations.append(env.get_obs())
+            infos.append({})
         return tuple(observations), tuple(infos)
 
     def step(self, actions):
