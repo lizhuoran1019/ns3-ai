@@ -102,6 +102,18 @@ ParseGymMessageOrThrow(google::protobuf::MessageLite* message,
 }
 
 void
+ValidateSequenceOrThrow(uint64_t actualSequence, uint64_t expectedSequence, const char* messageName)
+{
+    if (actualSequence != expectedSequence)
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai Gym " << messageName << " sequence mismatch: expected " << expectedSequence
+            << ", got " << actualSequence << ".";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+void
 HandleStopRequest()
 {
     NS_LOG_DEBUG("---Stop requested: true");
@@ -148,6 +160,9 @@ OpenGymInterface::OpenGymInterface()
       m_initSimMsgSent(false),
       m_stateAwaitingAction(false),
       m_memorySize(4096),
+      m_nextSequence(1),
+      m_pendingInitSequence(0),
+      m_pendingStateSequence(0),
       m_msgNames{"My Seg", "My Cpp to Python Msg", "My Python to Cpp Msg", "My Lockable"}
 {
 }
@@ -170,6 +185,12 @@ OpenGymInterface::GetTypeId()
                             .SetGroupName("OpenGym")
                             .AddConstructor<OpenGymInterface>();
     return tid;
+}
+
+uint64_t
+OpenGymInterface::NextSequence()
+{
+    return m_nextSequence++;
 }
 
 void
@@ -233,6 +254,8 @@ OpenGymInterface::Init()
     Ptr<OpenGymSpace> actionSpace = GetActionSpace();
 
     ns3_ai_gym::SimInitMsg simInitMsg;
+    m_pendingInitSequence = NextSequence();
+    simInitMsg.set_sequence(m_pendingInitSequence);
     if (obsSpace)
     {
         ns3_ai_gym::SpaceDescription spaceDesc = obsSpace->GetSpaceDescription();
@@ -254,6 +277,8 @@ OpenGymInterface::Init()
     msgInterface->CppRecvBegin();
     ParseGymMessageOrThrow(&simInitAck, msgInterface->GetPy2CppStruct(), "SimInitAck");
     msgInterface->CppRecvEnd();
+    ValidateSequenceOrThrow(simInitAck.sequence(), m_pendingInitSequence, "SimInitAck");
+    m_pendingInitSequence = 0;
 
     bool done = simInitAck.done();
     NS_LOG_DEBUG("Sim Init Ack: " << done);
@@ -284,6 +309,8 @@ OpenGymInterface::SendCurrentState()
     bool isGameOver = IsGameOver();
     std::string extraInfo = GetExtraInfo();
     ns3_ai_gym::EnvStateMsg envStateMsg;
+    m_pendingStateSequence = NextSequence();
+    envStateMsg.set_sequence(m_pendingStateSequence);
 
     ns3_ai_gym::DataContainer obsDataContainerPbMsg;
     if (obsDataContainer)
@@ -327,6 +354,8 @@ OpenGymInterface::ReceiveActions()
     msgInterface->CppRecvBegin();
     ParseGymMessageOrThrow(&envActMsg, msgInterface->GetPy2CppStruct(), "EnvActMsg");
     msgInterface->CppRecvEnd();
+    ValidateSequenceOrThrow(envActMsg.sequence(), m_pendingStateSequence, "EnvActMsg");
+    m_pendingStateSequence = 0;
     m_stateAwaitingAction = false;
 
     if (m_simEnd)
