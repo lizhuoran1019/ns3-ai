@@ -12,6 +12,7 @@
 #include "ns3-ai-msg-interface.h"
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <sstream>
@@ -86,11 +87,11 @@ BindNs3AiMsgSchemaTypes(py::module_& module)
         });
 }
 
-template <typename T>
-T&
-GetNs3AiFieldRef(T& object, const Ns3AiMsgField& field)
+template <typename FieldType, typename StructType>
+FieldType&
+GetNs3AiFieldRef(StructType& object, const Ns3AiMsgField& field)
 {
-    return *reinterpret_cast<T*>(reinterpret_cast<char*>(&object) + field.m_offset);
+    return *reinterpret_cast<FieldType*>(reinterpret_cast<char*>(&object) + field.m_offset);
 }
 
 template <typename StructType, typename FieldType>
@@ -107,7 +108,7 @@ BindNs3AiScalarField(py::class_<StructType>& pyClass, const Ns3AiMsgField& field
     const std::string name = field.m_name;
     pyClass.def_property(
         name.c_str(),
-        [field](StructType& object) -> FieldType& {
+        [field](StructType& object) -> FieldType {
             return GetNs3AiFieldRef<FieldType>(object, field);
         },
         [field](StructType& object, const FieldType& value) {
