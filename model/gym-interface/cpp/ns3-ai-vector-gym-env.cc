@@ -97,6 +97,26 @@ OpenGymVectorEnv::GetActiveEnvIndex() const
 }
 
 void
+OpenGymVectorEnv::Initialize(uint32_t envIndex)
+{
+    NS_LOG_FUNCTION(this << envIndex);
+    ValidateEnvIndex(envIndex);
+    NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
+    m_activeEnvIndex = envIndex;
+    m_interfaces[envIndex]->Init();
+}
+
+void
+OpenGymVectorEnv::InitializeAll()
+{
+    NS_LOG_FUNCTION(this);
+    for (uint32_t envIndex = 0; envIndex < m_numEnvs; ++envIndex)
+    {
+        Initialize(envIndex);
+    }
+}
+
+void
 OpenGymVectorEnv::Notify(uint32_t envIndex)
 {
     NS_LOG_FUNCTION(this << envIndex);
