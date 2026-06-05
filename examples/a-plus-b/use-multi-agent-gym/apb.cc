@@ -158,6 +158,7 @@ main(int argc, char* argv[])
     cmd.Parse(argc, argv);
 
     Ptr<MultiAgentApbVecEnv> agents = CreateObject<MultiAgentApbVecEnv>(numAgents);
+    agents->InitializeAll();
 
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::mt19937 gen(seed);
