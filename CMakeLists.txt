@@ -65,10 +65,10 @@ else()
 endif()
 
 set(msg_interface_srcs )
-set(msg_interface_hdrs
-        model/msg-interface/ns3-ai-msg-interface.h
-        model/msg-interface/ns3-ai-pybind-schema.h
-)
+# Keep pybind-only helper headers out of build_lib HEADER_FILES: ns-3 generates an aggregate
+# module header from this list, and including pybind11 there forces every C++ executable to link
+# against libpython even when it does not use Python bindings.
+set(msg_interface_hdrs model/msg-interface/ns3-ai-msg-interface.h)
 set(gym_interface_srcs
         model/gym-interface/cpp/ns3-ai-gym-interface.cc
         model/gym-interface/cpp/ns3-ai-gym-env.cc
