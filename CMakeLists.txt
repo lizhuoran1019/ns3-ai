@@ -7,15 +7,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options("-Wno-gcc-compat")
 endif()
 
+option(NS3AI_ENABLE_PYTHON_BINDINGS "Build ns3-ai Python binding modules" ON)
+
 find_package(Boost REQUIRED COMPONENTS program_options)
 include_directories(${Boost_INCLUDE_DIRS})
-find_package(Python REQUIRED COMPONENTS Interpreter Development)
-if (Python_FOUND)
-    message(STATUS "Python include directories: ${Python_INCLUDE_DIRS}")
-    message(STATUS "Python library directories: ${Python_LIBRARY_DIRS}")
+if(NS3AI_ENABLE_PYTHON_BINDINGS)
+    find_package(Python REQUIRED COMPONENTS Interpreter Development)
+    if (Python_FOUND)
+        message(STATUS "Python include directories: ${Python_INCLUDE_DIRS}")
+        message(STATUS "Python library directories: ${Python_LIBRARY_DIRS}")
+    endif()
+    find_package(pybind11 CONFIG REQUIRED)
+    include_directories(${pybind11_INCLUDE_DIRS})
+else()
+    message(STATUS "ns3-ai Python binding modules disabled")
 endif()
-find_package(pybind11 CONFIG REQUIRED)
-include_directories(${pybind11_INCLUDE_DIRS})
 
 # we need CONFIG for debug mode in macOS
 find_package(Protobuf CONFIG)
@@ -102,12 +108,14 @@ protobuf_generate(
         LANGUAGE cpp
         PROTOC_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/cpp"
 )
-protobuf_generate(
-        TARGET proto-objects
-        IMPORT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface"
-        LANGUAGE python
-        PROTOC_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/py/ns3ai_gym_env"
-)
+if(NS3AI_ENABLE_PYTHON_BINDINGS)
+    protobuf_generate(
+            TARGET proto-objects
+            IMPORT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface"
+            LANGUAGE python
+            PROTOC_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/model/gym-interface/py/ns3ai_gym_env"
+    )
+endif()
 
 build_lib(
         LIBNAME ai
@@ -118,4 +126,6 @@ build_lib(
 add_dependencies(${libai} proto-objects)
 
 # Build Gym msg binding module
-add_subdirectory(model/gym-interface/py)
+if(NS3AI_ENABLE_PYTHON_BINDINGS)
+    add_subdirectory(model/gym-interface/py)
+endif()
