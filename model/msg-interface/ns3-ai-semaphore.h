@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <stdexcept>
 #include <thread>
 
 /**
@@ -30,6 +31,16 @@
 struct Ns3AiSemaphore
 {
     explicit Ns3AiSemaphore() = default;
+
+    /**
+     * Default wait upper bound for legacy callers.
+     *
+     * A broken C++/Python send-recv order or a dead peer must not trap the
+     * process in an infinite busy-wait. 300 s is deliberately conservative so
+     * normal slow Python inference is still tolerated while protocol bugs
+     * become visible.
+     */
+    static constexpr uint64_t DEFAULT_SEM_WAIT_TIMEOUT_US = 300000000;
 
     static inline uint8_t atomic_read8(const volatile uint8_t* mem)
     {
@@ -65,17 +76,15 @@ struct Ns3AiSemaphore
     }
 
     /**
-     * Waits for a semaphore token.
+     * Waits for a semaphore token without throwing.
      *
-     * timeout_us == 0 keeps the historical unbounded wait behavior. When a
-     * timeout is configured, the function returns false instead of spinning
-     * forever. If abort_flag is supplied and becomes true, the wait is also
-     * aborted. The backoff avoids burning one CPU core while a peer process is
-     * doing slow inference or has already exited.
+     * timeout_us == 0 preserves the historical unbounded wait behavior.
+     * abort_flag may point to a shared-memory flag used by a higher-level
+     * protocol to stop waiting when the peer has finished.
      */
-    static inline bool sem_wait(volatile uint8_t* mem,
-                                uint64_t timeout_us = 0,
-                                const volatile bool* abort_flag = nullptr)
+    static inline bool sem_timed_wait(volatile uint8_t* mem,
+                                      uint64_t timeout_us,
+                                      const volatile bool* abort_flag = nullptr)
     {
         if (sem_try_wait(mem))
         {
@@ -105,6 +114,29 @@ struct Ns3AiSemaphore
             }
             Backoff(attempts++);
         }
+    }
+
+    /**
+     * Legacy blocking API. It now fails loudly instead of spinning forever.
+     */
+    static inline void sem_wait(volatile uint8_t* mem)
+    {
+        if (!sem_timed_wait(mem, DEFAULT_SEM_WAIT_TIMEOUT_US))
+        {
+            throw std::runtime_error(
+                "ns3-ai semaphore wait timed out. Check that C++ and Python send/recv calls "
+                "are paired in the same order, and that the peer process is still alive.");
+        }
+    }
+
+    /**
+     * Blocking API with a caller-specified timeout. timeout_us == 0 means no timeout.
+     */
+    static inline bool sem_wait(volatile uint8_t* mem,
+                                uint64_t timeout_us,
+                                const volatile bool* abort_flag = nullptr)
+    {
+        return sem_timed_wait(mem, timeout_us, abort_flag);
     }
 
     static inline uint8_t sem_post(volatile uint8_t* mem)
