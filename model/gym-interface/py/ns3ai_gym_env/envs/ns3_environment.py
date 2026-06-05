@@ -143,6 +143,7 @@ class Ns3Env(gym.Env):
         reply = pb.SimInitAck()
         reply.done = True
         reply.stopSimReq = False
+        reply.sequence = simInitMsg.sequence
         reply_str = reply.SerializeToString()
         self._ensure_msg_fits(reply_str, "SimInitAck")
 
@@ -155,6 +156,7 @@ class Ns3Env(gym.Env):
     def send_close_command(self):
         reply = pb.EnvActMsg()
         reply.stopSimReq = True
+        reply.sequence = self.currentStateSequence
 
         replyMsg = reply.SerializeToString()
         self._ensure_msg_fits(replyMsg, "EnvActMsg")
@@ -176,6 +178,7 @@ class Ns3Env(gym.Env):
         envStateMsg.ParseFromString(request)
         self.msgInterface.PyRecvEnd()
 
+        self.currentStateSequence = envStateMsg.sequence
         self.obsData = self._create_data(envStateMsg.obsData)
         self.reward = envStateMsg.reward
         self.gameOver = envStateMsg.isGameOver
@@ -279,6 +282,7 @@ class Ns3Env(gym.Env):
 
     def send_actions(self, actions):
         reply = pb.EnvActMsg()
+        reply.sequence = self.currentStateSequence
 
         actionMsg = self._pack_data(actions, self.action_space)
         reply.actData.CopyFrom(actionMsg)
@@ -319,6 +323,7 @@ class Ns3Env(gym.Env):
         self.showOutput = showOutput
 
         self.newStateRx = False
+        self.currentStateSequence = 0
         self.obsData = None
         self.reward = 0
         self.gameOver = False
@@ -358,6 +363,7 @@ class Ns3Env(gym.Env):
 
         self.msgInterface = None
         self.newStateRx = False
+        self.currentStateSequence = 0
         self.obsData = None
         self.reward = 0
         self.gameOver = False
