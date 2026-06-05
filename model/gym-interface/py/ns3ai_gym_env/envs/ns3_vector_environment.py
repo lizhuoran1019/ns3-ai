@@ -101,8 +101,14 @@ class Ns3VecEnv:
         return tuple(observations), tuple(rewards), tuple(terminated), tuple(truncated), tuple(infos)
 
     def close(self):
-        for env in self.envs:
-            env.close()
+        if not self.envs:
+            return
+        self.envs[0].close()
+        for env in self.envs[1:]:
+            try:
+                del env.exp
+            except AttributeError:
+                pass
 
     def get_random_action(self):
         return tuple(env.get_random_action() for env in self.envs)
