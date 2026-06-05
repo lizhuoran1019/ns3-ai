@@ -65,7 +65,10 @@ else()
 endif()
 
 set(msg_interface_srcs )
-set(msg_interface_hdrs model/msg-interface/ns3-ai-msg-interface.h)
+set(msg_interface_hdrs
+        model/msg-interface/ns3-ai-msg-interface.h
+        model/msg-interface/ns3-ai-pybind-schema.h
+)
 set(gym_interface_srcs
         model/gym-interface/cpp/ns3-ai-gym-interface.cc
         model/gym-interface/cpp/ns3-ai-gym-env.cc
