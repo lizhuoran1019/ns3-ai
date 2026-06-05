@@ -18,20 +18,20 @@
 #         Muyuan Shen <muyuan_shen@hust.edu.cn>
 
 import os
+import shlex
 import subprocess
 import psutil
 import time
-import signal
 
 
 SIMULATION_EARLY_ENDING = 0.5   # wait and see if the subprocess is running after creation
 
 
 def get_setting(setting_map):
-    ret = ''
+    args = []
     for key, value in setting_map.items():
-        ret += ' --{}={}'.format(key, value)
-    return ret
+        args.append('--{}={}'.format(key, value))
+    return args
 
 
 def make_shm_names(prefix):
@@ -43,29 +43,48 @@ def make_shm_names(prefix):
     }
 
 
-def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
+def _format_cmd(args):
+    return ' '.join(shlex.quote(str(arg)) for arg in args)
+
+
+def _make_run_env(path, env=None):
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
-    run_env['LD_LIBRARY_PATH'] = os.path.abspath(os.path.join(path, 'build', 'lib'))
-    # import pdb; pdb.set_trace()
-    exec_path = os.path.join(path, 'ns3')
-    if not setting:
-        cmd = '{} run {}'.format(exec_path, pname)
-    else:
-        cmd = '{} run {} --{}'.format(exec_path, pname, get_setting(setting))
-    if show_output:
-        proc = subprocess.Popen(cmd, shell=True, text=True, env=run_env,
-                                stdin=subprocess.PIPE,
-                                preexec_fn=os.setpgrp)
-    else:
-        proc = subprocess.Popen(cmd, shell=True, text=True, env=run_env,
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                preexec_fn=os.setpgrp)
 
-    return cmd, proc
+    lib_path = os.path.abspath(os.path.join(path, 'build', 'lib'))
+    existing = run_env.get('LD_LIBRARY_PATH')
+    if existing:
+        run_env['LD_LIBRARY_PATH'] = '{}{}{}'.format(lib_path, os.pathsep, existing)
+    else:
+        run_env['LD_LIBRARY_PATH'] = lib_path
+    return run_env
+
+
+def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
+    path = os.path.abspath(path)
+    run_env = _make_run_env(path, env)
+    exec_path = os.path.join(path, 'ns3')
+
+    cmd = [exec_path, 'run', pname]
+    if setting:
+        cmd.extend(get_setting(setting))
+
+    popen_kwargs = {
+        'text': True,
+        'env': run_env,
+        'cwd': path,
+        'stdin': subprocess.PIPE,
+        'start_new_session': True,
+    }
+    if not show_output:
+        popen_kwargs.update({
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.PIPE,
+        })
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    return _format_cmd(cmd), proc
 
 
 # used to kill the ns-3 script process and its child processes
@@ -88,16 +107,8 @@ def kill_proc_tree(p, timeout=None, on_terminate=None):
     return succ, err
 
 
-# According to Python signal docs, after a signal is received, the
-# low-level signal handler sets a flag which tells the virtual machine
-# to execute the corresponding Python signal handler at a later point.
-#
-# As a result, a long ns-3 simulation, during which no C++-Python
-# interaction occurs (such as the Multi-BSS example), may run uninterrupted
-# for a long time regardless of any signals received.
-def sigint_handler(sig, frame):
-    print("\nns3ai_utils: SIGINT detected")
-    exit(1)  # this will execute the `finally` block
+class Ns3AiExperimentError(RuntimeError):
+    pass
 
 
 # This class sets up the shared memory and runs the simulation process.
@@ -117,8 +128,7 @@ class Experiment:
                  shmPrefix=None,
                  env=None):
         self.targetName = targetName  # ns-3 target name, not file name
-        self.ns3Path = ns3Path
-        os.chdir(ns3Path)
+        self.ns3Path = os.path.abspath(ns3Path)
         self.msgModule = msgModule
         self.handleFinish = handleFinish
         self.useVector = useVector
@@ -143,7 +153,7 @@ class Experiment:
         )
         if self.useVector:
             if self.vectorSize is None:
-                raise Exception('ns3ai_utils: Error: Using vector but size is unknown')
+                raise ValueError('ns3ai_utils: Using vector but size is unknown')
             self.msgInterface.GetCpp2PyVector().resize(self.vectorSize)
             self.msgInterface.GetPy2CppVector().resize(self.vectorSize)
 
@@ -152,8 +162,14 @@ class Experiment:
         print('ns3ai_utils: Experiment initialized')
 
     def __del__(self):
-        self.kill()
-        del self.msgInterface
+        try:
+            self.kill()
+        except Exception:
+            pass
+        try:
+            del self.msgInterface
+        except AttributeError:
+            pass
         print('ns3ai_utils: Experiment destroyed')
 
     # run ns3 script in cmd with the setting being input
@@ -165,14 +181,20 @@ class Experiment:
         if env:
             run_env.update(env)
         self.simCmd, self.proc = run_single_ns3(
-            './', self.targetName, setting=setting, env=run_env, show_output=show_output)
+            self.ns3Path, self.targetName, setting=setting, env=run_env, show_output=show_output)
         print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
-        # exit if an early error occurred, such as wrong target name
+        # raise if an early error occurred, such as wrong target name
         time.sleep(SIMULATION_EARLY_ENDING)
         if not self.isalive():
-            print('ns3ai_utils: Subprocess died very early')
-            exit(1)
-        signal.signal(signal.SIGINT, sigint_handler)
+            stdout = None
+            stderr = None
+            if self.proc.stdout is not None or self.proc.stderr is not None:
+                stdout, stderr = self.proc.communicate()
+            raise Ns3AiExperimentError(
+                'ns3ai_utils: Subprocess died very early while running `{}`. stdout={!r}, stderr={!r}'.format(
+                    self.simCmd, stdout, stderr
+                )
+            )
         return self.msgInterface
 
     def kill(self):
@@ -182,7 +204,7 @@ class Experiment:
             self.simCmd = None
 
     def isalive(self):
-        return self.proc.poll() is None
+        return self.proc is not None and self.proc.poll() is None
 
 
 class ParallelExperiment:
@@ -231,4 +253,4 @@ class ParallelExperiment:
         self.kill()
 
 
-__all__ = ['Experiment', 'ParallelExperiment', 'make_shm_names']
+__all__ = ['Experiment', 'ParallelExperiment', 'make_shm_names', 'Ns3AiExperimentError']
