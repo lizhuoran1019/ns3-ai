@@ -302,28 +302,16 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return true;
         }
+
+        if (!Ns3AiSemaphore::sem_wait(&m_sync->m_cpp2pyEmptyCount, m_syncTimeoutUs))
+        {
+            return false;
+        }
+
         m_isFinished = true;
         m_sync->m_isFinished = true;
-
-        if (Ns3AiSemaphore::sem_try_wait(&m_sync->m_cpp2pyEmptyCount))
-        {
-            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
-            return true;
-        }
-
-        // A full cpp2py slot already wakes the Python side; the finish flag is
-        // visible when that pending message is consumed.
-        if (Ns3AiSemaphore::atomic_read8(&m_sync->m_cpp2pyFullCount) > 0)
-        {
-            return true;
-        }
-
-        if (Ns3AiSemaphore::sem_wait(&m_sync->m_cpp2pyEmptyCount, m_syncTimeoutUs))
-        {
-            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
-            return true;
-        }
-        return false;
+        Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+        return true;
     };
 
     // for Python side:
