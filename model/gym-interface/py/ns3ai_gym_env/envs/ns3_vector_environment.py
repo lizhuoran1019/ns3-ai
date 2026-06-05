@@ -81,13 +81,18 @@ class Ns3VecEnv:
         if len(actions) != self.num_envs:
             raise ValueError(f"expected {self.num_envs} actions, got {len(actions)}")
 
+        for env, action in zip(self.envs, actions):
+            env.send_actions(action)
+
         observations = []
         rewards = []
         terminated = []
         truncated = []
         infos = []
-        for env, action in zip(self.envs, actions):
-            obs, reward, done, trunc, info = env.step(action)
+        for env in self.envs:
+            env.rx_env_state()
+            obs, reward, done, trunc, info = env.get_state()
+            env.envDirty = True
             observations.append(obs)
             rewards.append(reward)
             terminated.append(done)
