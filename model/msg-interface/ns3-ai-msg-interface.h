@@ -69,6 +69,26 @@ struct Ns3AiMsgInterfaceNames
 };
 
 /**
+ * \brief Complete configuration for one message interface instance.
+ *
+ * Passing this object to GetInterface decouples per-instance settings from the
+ * singleton's legacy mutable defaults, so one process can create interfaces
+ * with different creator/vector/finish/size/timeout/name settings.
+ */
+struct Ns3AiMsgInterfaceConfig
+{
+    bool m_isMemoryCreator{false};
+    bool m_useVector{false};
+    bool m_handleFinish{false};
+    uint32_t m_size{4096};
+    uint64_t m_syncTimeoutUs{300000000};
+    Ns3AiMsgInterfaceNames m_names{"My Seg",
+                                    "My Cpp to Python Msg",
+                                    "My Python to Cpp Msg",
+                                    "My Lockable"};
+};
+
+/**
  * \brief Type-erased base class for keeping typed message interfaces in one registry.
  */
 class Ns3AiMsgInterfaceBase
@@ -519,12 +539,28 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
     };
 
     /**
+     * Returns the singleton's legacy default configuration.
+     */
+    Ns3AiMsgInterfaceConfig GetDefaultConfig() const
+    {
+        return m_defaultConfig;
+    };
+
+    /**
+     * Replaces the singleton's legacy default configuration.
+     */
+    void SetDefaultConfig(const Ns3AiMsgInterfaceConfig& config)
+    {
+        m_defaultConfig = config;
+    };
+
+    /**
      * Sets if this side (C++ or Python) is the memory creator.
      * Configuration on two sides must be different
      */
     void SetIsMemoryCreator(bool isMemoryCreator)
     {
-        this->m_isMemoryCreator = isMemoryCreator;
+        m_defaultConfig.m_isMemoryCreator = isMemoryCreator;
     };
 
     /**
@@ -533,7 +569,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     void SetUseVector(bool useVector)
     {
-        this->m_useVector = useVector;
+        m_defaultConfig.m_useVector = useVector;
     };
 
     /**
@@ -542,7 +578,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     void SetHandleFinish(bool handleFinish)
     {
-        this->m_handleFinish = handleFinish;
+        m_defaultConfig.m_handleFinish = handleFinish;
     };
 
     /**
@@ -552,7 +588,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     void SetMemorySize(uint32_t size)
     {
-        this->m_size = size;
+        m_defaultConfig.m_size = size;
     };
 
     /**
@@ -561,7 +597,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     void SetSyncTimeoutUs(uint64_t timeoutUs)
     {
-        this->m_syncTimeoutUs = timeoutUs;
+        m_defaultConfig.m_syncTimeoutUs = timeoutUs;
     };
 
     /**
@@ -570,7 +606,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     void SetSyncTimeoutMs(uint64_t timeoutMs)
     {
-        this->m_syncTimeoutUs = timeoutMs * 1000;
+        m_defaultConfig.m_syncTimeoutUs = timeoutMs * 1000;
     };
 
     /**
@@ -578,7 +614,7 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     uint64_t GetSyncTimeoutUs() const
     {
-        return this->m_syncTimeoutUs;
+        return m_defaultConfig.m_syncTimeoutUs;
     };
 
     /**
@@ -591,10 +627,10 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
                   std::string py2cppMsgName,
                   std::string lockableName)
     {
-        this->m_segmentName = segmentName;
-        this->m_cpp2pyMsgName = cpp2pyMsgName;
-        this->m_py2cppMsgName = py2cppMsgName;
-        this->m_lockableName = lockableName;
+        m_defaultConfig.m_names = Ns3AiMsgInterfaceNames{segmentName,
+                                                         cpp2pyMsgName,
+                                                         py2cppMsgName,
+                                                         lockableName};
     };
 
     /**
@@ -603,40 +639,34 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
      */
     void SetNamesFromPrefix(const std::string& prefix)
     {
-        Ns3AiMsgInterfaceNames names = MakeNames(prefix);
-        SetNames(names.m_segmentName, names.m_cpp2pyMsgName, names.m_py2cppMsgName, names.m_lockableName);
+        m_defaultConfig.m_names = MakeNames(prefix);
     };
 
     /**
      * Gets the impl which has semaphore (synchronization) methods.
-     * The old no-argument API remains available and uses the current settings.
+     * The old no-argument API remains available and uses the current default config.
      */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface()
     {
-        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(m_segmentName,
-                                                          m_cpp2pyMsgName,
-                                                          m_py2cppMsgName,
-                                                          m_lockableName,
-                                                          "default");
+        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(m_defaultConfig, "default");
     };
 
     /**
-     * Gets an interface under deterministic names produced from an instance id.
+     * Gets an interface under deterministic names produced from an instance id,
+     * using the current default config for non-name settings.
      */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(const std::string& instanceId)
     {
-        Ns3AiMsgInterfaceNames names = MakeNames(instanceId);
-        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(names.m_segmentName,
-                                                          names.m_cpp2pyMsgName,
-                                                          names.m_py2cppMsgName,
-                                                          names.m_lockableName,
-                                                          instanceId);
+        Ns3AiMsgInterfaceConfig config = m_defaultConfig;
+        config.m_names = MakeNames(instanceId);
+        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(config, instanceId);
     };
 
     /**
-     * Gets an interface under explicitly supplied shared-memory object names.
+     * Gets an interface under explicitly supplied shared-memory object names,
+     * using the current default config for non-name settings.
      */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(
@@ -646,11 +676,25 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         const std::string& lockableName,
         const std::string& instanceId = "custom")
     {
-        const std::string key = BuildInterfaceKey<Cpp2PyMsgType, Py2CppMsgType>(instanceId,
-                                                                                segmentName,
-                                                                                cpp2pyMsgName,
-                                                                                py2cppMsgName,
-                                                                                lockableName);
+        Ns3AiMsgInterfaceConfig config = m_defaultConfig;
+        config.m_names = Ns3AiMsgInterfaceNames{segmentName,
+                                                cpp2pyMsgName,
+                                                py2cppMsgName,
+                                                lockableName};
+        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(config, instanceId);
+    };
+
+    /**
+     * Gets an interface from an explicit per-instance config.
+     * This avoids mutating singleton defaults when different interfaces in one
+     * process need different settings.
+     */
+    template <typename Cpp2PyMsgType, typename Py2CppMsgType>
+    Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(
+        const Ns3AiMsgInterfaceConfig& config,
+        const std::string& instanceId = "custom")
+    {
+        const std::string key = BuildInterfaceKey<Cpp2PyMsgType, Py2CppMsgType>(instanceId, config);
         auto iter = m_interfaces.find(key);
         if (iter != m_interfaces.end())
         {
@@ -658,15 +702,15 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
         }
 
         auto interface = std::make_unique<Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>>(
-            this->m_isMemoryCreator,
-            this->m_useVector,
-            this->m_handleFinish,
-            this->m_size,
-            segmentName.c_str(),
-            cpp2pyMsgName.c_str(),
-            py2cppMsgName.c_str(),
-            lockableName.c_str(),
-            this->m_syncTimeoutUs);
+            config.m_isMemoryCreator,
+            config.m_useVector,
+            config.m_handleFinish,
+            config.m_size,
+            config.m_names.m_segmentName.c_str(),
+            config.m_names.m_cpp2pyMsgName.c_str(),
+            config.m_names.m_py2cppMsgName.c_str(),
+            config.m_names.m_lockableName.c_str(),
+            config.m_syncTimeoutUs);
         auto rawInterface = interface.get();
         m_interfaces.emplace(key, std::move(interface));
         return rawInterface;
@@ -675,28 +719,19 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
   private:
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     std::string BuildInterfaceKey(const std::string& instanceId,
-                                  const std::string& segmentName,
-                                  const std::string& cpp2pyMsgName,
-                                  const std::string& py2cppMsgName,
-                                  const std::string& lockableName) const
+                                  const Ns3AiMsgInterfaceConfig& config) const
     {
         std::ostringstream oss;
         oss << typeid(Cpp2PyMsgType).name() << '|' << typeid(Py2CppMsgType).name() << '|'
-            << instanceId << '|' << segmentName << '|' << cpp2pyMsgName << '|' << py2cppMsgName
-            << '|' << lockableName << '|' << m_isMemoryCreator << '|' << m_useVector << '|'
-            << m_handleFinish << '|' << m_size << '|' << m_syncTimeoutUs;
+            << instanceId << '|' << config.m_names.m_segmentName << '|'
+            << config.m_names.m_cpp2pyMsgName << '|' << config.m_names.m_py2cppMsgName << '|'
+            << config.m_names.m_lockableName << '|' << config.m_isMemoryCreator << '|'
+            << config.m_useVector << '|' << config.m_handleFinish << '|' << config.m_size << '|'
+            << config.m_syncTimeoutUs;
         return oss.str();
     };
 
-    bool m_isMemoryCreator{false};
-    bool m_useVector{false};
-    bool m_handleFinish{false};
-    uint32_t m_size = 4096;
-    uint64_t m_syncTimeoutUs = Ns3AiMsgInterfaceImpl<uint8_t, uint8_t>::DEFAULT_SYNC_TIMEOUT_US;
-    std::string m_segmentName = "My Seg";
-    std::string m_cpp2pyMsgName = "My Cpp to Python Msg";
-    std::string m_py2cppMsgName = "My Python to Cpp Msg";
-    std::string m_lockableName = "My Lockable";
+    Ns3AiMsgInterfaceConfig m_defaultConfig{};
     std::unordered_map<std::string, std::unique_ptr<Ns3AiMsgInterfaceBase>> m_interfaces;
 };
 
