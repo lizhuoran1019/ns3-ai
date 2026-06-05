@@ -20,6 +20,7 @@
 #ifndef NS3_AI_SEMAPHORE_H
 #define NS3_AI_SEMAPHORE_H
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -44,30 +45,40 @@ struct Ns3AiSemaphore
 
     static inline uint8_t atomic_read8(const volatile uint8_t* mem)
     {
-        uint8_t old_val = *mem;
-        __sync_synchronize();
-        return old_val;
+        return AtomicRef(mem)->load(std::memory_order_acquire);
     }
 
     static inline uint8_t atomic_cas8(volatile uint8_t* mem, uint8_t with, uint8_t cmp)
     {
-        return __sync_val_compare_and_swap(const_cast<uint8_t*>(mem), cmp, with);
+        uint8_t expected = cmp;
+        AtomicRef(mem)->compare_exchange_strong(expected,
+                                                with,
+                                                std::memory_order_acq_rel,
+                                                std::memory_order_acquire);
+        return expected;
     }
 
     static inline uint8_t atomic_add8(volatile uint8_t* mem, uint8_t val)
     {
-        return __sync_fetch_and_add(const_cast<uint8_t*>(mem), val);
+        return AtomicRef(mem)->fetch_add(val, std::memory_order_release);
     }
 
     static inline bool atomic_add_unless8(volatile uint8_t* mem, uint8_t value, uint8_t unless_this)
     {
-        uint8_t old;
-        uint8_t c(atomic_read8(mem));
-        while (c != unless_this && (old = atomic_cas8(mem, c + value, c)) != c)
+        auto* atomicMem = AtomicRef(mem);
+        uint8_t current = atomicMem->load(std::memory_order_acquire);
+        while (current != unless_this)
         {
-            c = old;
+            const uint8_t desired = static_cast<uint8_t>(current + value);
+            if (atomicMem->compare_exchange_weak(current,
+                                                 desired,
+                                                 std::memory_order_acq_rel,
+                                                 std::memory_order_acquire))
+            {
+                return true;
+            }
         }
-        return c != unless_this;
+        return false;
     }
 
     static inline bool sem_try_wait(volatile uint8_t* mem)
@@ -95,7 +106,7 @@ struct Ns3AiSemaphore
         uint32_t attempts = 0;
         while (true)
         {
-            if (abort_flag != nullptr && *abort_flag)
+            if (abort_flag != nullptr && AtomicReadBool(abort_flag))
             {
                 return false;
             }
@@ -145,6 +156,22 @@ struct Ns3AiSemaphore
     }
 
   private:
+    static inline std::atomic<uint8_t>* AtomicRef(volatile uint8_t* mem)
+    {
+        return reinterpret_cast<std::atomic<uint8_t>*>(const_cast<uint8_t*>(mem));
+    }
+
+    static inline const std::atomic<uint8_t>* AtomicRef(const volatile uint8_t* mem)
+    {
+        return reinterpret_cast<const std::atomic<uint8_t>*>(const_cast<const uint8_t*>(mem));
+    }
+
+    static inline bool AtomicReadBool(const volatile bool* mem)
+    {
+        return reinterpret_cast<const std::atomic<bool>*>(const_cast<const bool*>(mem))
+            ->load(std::memory_order_acquire);
+    }
+
     static inline void Backoff(uint32_t attempts)
     {
         if (attempts < 64)
