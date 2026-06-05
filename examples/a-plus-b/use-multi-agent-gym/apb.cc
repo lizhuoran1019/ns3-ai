@@ -27,7 +27,7 @@ class MultiAgentApbVecEnv : public OpenGymVectorEnv
     void DoDispose() override;
 
     void SetOperands(uint32_t agentId, uint32_t a, uint32_t b);
-    uint32_t GetAPlusB(uint32_t agentId);
+    uint32_t GetAPlusB(uint32_t agentId) const;
 
     // OpenGymVectorEnv indexed interfaces:
     Ptr<OpenGymSpace> GetActionSpace(uint32_t envIndex) override;
@@ -79,9 +79,8 @@ MultiAgentApbVecEnv::SetOperands(uint32_t agentId, uint32_t a, uint32_t b)
 }
 
 uint32_t
-MultiAgentApbVecEnv::GetAPlusB(uint32_t agentId)
+MultiAgentApbVecEnv::GetAPlusB(uint32_t agentId) const
 {
-    Notify(agentId);
     return m_sum.at(agentId);
 }
 
@@ -174,11 +173,14 @@ main(int argc, char* argv[])
 
             std::cout << "agent=" << agentId << ";step=" << step << ";set=" << a << "," << b << ";"
                       << std::endl;
+        }
 
-            uint32_t sum = agents->GetAPlusB(agentId);
+        agents->NotifyAll();
 
-            std::cout << "agent=" << agentId << ";step=" << step << ";get=" << sum << ";"
-                      << std::endl;
+        for (uint32_t agentId = 0; agentId < numAgents; ++agentId)
+        {
+            std::cout << "agent=" << agentId << ";step=" << step << ";get="
+                      << agents->GetAPlusB(agentId) << ";" << std::endl;
         }
     }
 
