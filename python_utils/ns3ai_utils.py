@@ -25,6 +25,7 @@ import time
 
 
 SIMULATION_EARLY_ENDING = 0.5   # wait and see if the subprocess is running after creation
+DEFAULT_SYNC_TIMEOUT_US = 300000000
 
 
 def get_setting(setting_map):
@@ -40,6 +41,7 @@ def make_shm_names(prefix):
         'cpp2pyMsgName': '{}.cpp2py'.format(prefix),
         'py2cppMsgName': '{}.py2cpp'.format(prefix),
         'lockableName': '{}.lock'.format(prefix),
+        'headerName': '{}.header'.format(prefix),
     }
 
 
@@ -125,6 +127,12 @@ class Experiment:
                  cpp2pyMsgName="My Cpp to Python Msg",
                  py2cppMsgName="My Python to Cpp Msg",
                  lockableName="My Lockable",
+                 syncTimeoutUs=None,
+                 headerName="My Header",
+                 cpp2pySchemaHash=0,
+                 py2cppSchemaHash=0,
+                 cpp2pySchemaVersion=0,
+                 py2cppSchemaVersion=0,
                  shmPrefix=None,
                  env=None):
         self.targetName = targetName  # ns-3 target name, not file name
@@ -140,16 +148,37 @@ class Experiment:
             cpp2pyMsgName = names['cpp2pyMsgName']
             py2cppMsgName = names['py2cppMsgName']
             lockableName = names['lockableName']
+            headerName = names['headerName']
+        if syncTimeoutUs is None:
+            syncTimeoutUs = getattr(msgModule, 'default_sync_timeout_us', DEFAULT_SYNC_TIMEOUT_US)
         self.shmPrefix = shmPrefix
         self.segName = segName
         self.cpp2pyMsgName = cpp2pyMsgName
         self.py2cppMsgName = py2cppMsgName
         self.lockableName = lockableName
+        self.syncTimeoutUs = syncTimeoutUs
+        self.headerName = headerName
+        self.cpp2pySchemaHash = cpp2pySchemaHash
+        self.py2cppSchemaHash = py2cppSchemaHash
+        self.cpp2pySchemaVersion = cpp2pySchemaVersion
+        self.py2cppSchemaVersion = py2cppSchemaVersion
         self.env = env or {}
 
         self.msgInterface = msgModule.Ns3AiMsgInterfaceImpl(
-            True, self.useVector, self.handleFinish,
-            self.shmSize, self.segName, self.cpp2pyMsgName, self.py2cppMsgName, self.lockableName
+            True,
+            self.useVector,
+            self.handleFinish,
+            self.shmSize,
+            self.segName,
+            self.cpp2pyMsgName,
+            self.py2cppMsgName,
+            self.lockableName,
+            self.syncTimeoutUs,
+            self.headerName,
+            self.cpp2pySchemaHash,
+            self.py2cppSchemaHash,
+            self.cpp2pySchemaVersion,
+            self.py2cppSchemaVersion,
         )
         if self.useVector:
             if self.vectorSize is None:
@@ -212,6 +241,11 @@ class ParallelExperiment:
                  handleFinish=False,
                  useVector=False, vectorSize=None,
                  shmSize=4096,
+                 syncTimeoutUs=None,
+                 cpp2pySchemaHash=0,
+                 py2cppSchemaHash=0,
+                 cpp2pySchemaVersion=0,
+                 py2cppSchemaVersion=0,
                  shmPrefixBase='ns3ai-env',
                  env=None):
         if count <= 0:
@@ -225,6 +259,11 @@ class ParallelExperiment:
                            useVector=useVector,
                            vectorSize=vectorSize,
                            shmSize=shmSize,
+                           syncTimeoutUs=syncTimeoutUs,
+                           cpp2pySchemaHash=cpp2pySchemaHash,
+                           py2cppSchemaHash=py2cppSchemaHash,
+                           cpp2pySchemaVersion=cpp2pySchemaVersion,
+                           py2cppSchemaVersion=py2cppSchemaVersion,
                            shmPrefix=prefix,
                            env=env)
             )
@@ -253,4 +292,10 @@ class ParallelExperiment:
         self.kill()
 
 
-__all__ = ['Experiment', 'ParallelExperiment', 'make_shm_names', 'Ns3AiExperimentError']
+__all__ = [
+    'Experiment',
+    'ParallelExperiment',
+    'make_shm_names',
+    'Ns3AiExperimentError',
+    'DEFAULT_SYNC_TIMEOUT_US',
+]
