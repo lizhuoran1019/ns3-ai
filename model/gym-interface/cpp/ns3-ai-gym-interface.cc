@@ -175,6 +175,7 @@ OpenGymInterface::OpenGymInterface(const std::string& sharedMemoryPrefix)
 
 OpenGymInterface::~OpenGymInterface()
 {
+    m_msgInterface.reset();
 }
 
 TypeId
@@ -537,6 +538,15 @@ void
 OpenGymInterface::DoDispose()
 {
     NS_LOG_FUNCTION(this);
+    m_msgInterface.reset();
+    m_actionSpaceCb = Callback<Ptr<OpenGymSpace>>();
+    m_observationSpaceCb = Callback<Ptr<OpenGymSpace>>();
+    m_gameOverCb = Callback<bool>();
+    m_obsCb = Callback<Ptr<OpenGymDataContainer>>();
+    m_rewardCb = Callback<float>();
+    m_extraInfoCb = Callback<std::string>();
+    m_actionCb = Callback<bool, Ptr<OpenGymDataContainer>>();
+    Object::DoDispose();
 }
 
 void
