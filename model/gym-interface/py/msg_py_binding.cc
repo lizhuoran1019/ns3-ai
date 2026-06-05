@@ -21,7 +21,23 @@
 
 #include <pybind11/pybind11.h>
 
+#include <stdexcept>
+
 namespace py = pybind11;
+
+namespace
+{
+
+void
+ValidateGymMsgSize(const Ns3AiGymMsg& msg)
+{
+    if (msg.size > MSG_BUFFER_SIZE)
+    {
+        throw std::runtime_error("ns3-ai Gym message size exceeds the configured buffer size");
+    }
+}
+
+} // namespace
 
 PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 {
@@ -32,12 +48,11 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
         .def_readwrite("size", &Ns3AiGymMsg::size)
         .def("get_buffer",
              [](Ns3AiGymMsg& msg) {
-                 // Get memoryview of the buffer
-                 return py::memoryview::from_memory((void*)msg.buffer, msg.size);
+                 ValidateGymMsgSize(msg);
+                 return py::memoryview::from_memory(static_cast<void*>(msg.buffer), msg.size);
              })
         .def("get_buffer_full", [](Ns3AiGymMsg& msg) {
-            // Get memoryview of the buffer
-            return py::memoryview::from_memory((void*)msg.buffer, MSG_BUFFER_SIZE);
+            return py::memoryview::from_memory(static_cast<void*>(msg.buffer), MSG_BUFFER_SIZE);
         });
 
     py::class_<ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>>(m, "Ns3AiMsgInterfaceImpl")

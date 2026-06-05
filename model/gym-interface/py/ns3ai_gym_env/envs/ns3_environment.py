@@ -7,6 +7,17 @@ from ns3ai_utils import Experiment
 
 
 class Ns3Env(gym.Env):
+    def _ensure_msg_fits(self, payload, message_name):
+        payload_size = len(payload)
+        if payload_size > py_binding.msg_buffer_size:
+            raise ValueError(
+                "ns3-ai Gym {} message is {} bytes, which exceeds the configured "
+                "shared-memory buffer of {} bytes. Increase NS3AI_GYM_MSG_BUFFER_SIZE "
+                "when configuring ns-3.".format(
+                    message_name, payload_size, py_binding.msg_buffer_size
+                )
+            )
+
     def _create_space(self, spaceDesc):
         space = None
         if spaceDesc.type == pb.Discrete:
@@ -82,7 +93,6 @@ class Ns3Env(gym.Env):
             # TODO: reshape using shape info
             data = np.array(data)
             return data
-
         elif dataContainerPb.type == pb.Tuple:
             tupleDataPb = pb.TupleDataContainer()
             dataContainerPb.data.Unpack(tupleDataPb)
@@ -121,7 +131,7 @@ class Ns3Env(gym.Env):
         reply.done = True
         reply.stopSimReq = False
         reply_str = reply.SerializeToString()
-        assert len(reply_str) <= py_binding.msg_buffer_size
+        self._ensure_msg_fits(reply_str, "SimInitAck")
 
         self.msgInterface.PySendBegin()
         self.msgInterface.GetPy2CppStruct().size = len(reply_str)
@@ -134,7 +144,7 @@ class Ns3Env(gym.Env):
         reply.stopSimReq = True
 
         replyMsg = reply.SerializeToString()
-        assert len(replyMsg) <= py_binding.msg_buffer_size
+        self._ensure_msg_fits(replyMsg, "EnvActMsg")
         self.msgInterface.PySendBegin()
         self.msgInterface.GetPy2CppStruct().size = len(replyMsg)
         self.msgInterface.GetPy2CppStruct().get_buffer_full()[:len(replyMsg)] = replyMsg
@@ -254,7 +264,7 @@ class Ns3Env(gym.Env):
         reply.actData.CopyFrom(actionMsg)
 
         replyMsg = reply.SerializeToString()
-        assert len(replyMsg) <= py_binding.msg_buffer_size
+        self._ensure_msg_fits(replyMsg, "EnvActMsg")
         self.msgInterface.PySendBegin()
         self.msgInterface.GetPy2CppStruct().size = len(replyMsg)
         self.msgInterface.GetPy2CppStruct().get_buffer_full()[:len(replyMsg)] = replyMsg
