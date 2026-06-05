@@ -25,3 +25,9 @@ build_lib_example(
         SOURCE_FILES use-gym/apb.cc
         LIBRARIES_TO_LINK ${libai} ${libcore}
 )
+
+build_lib_example(
+        NAME ns3ai_apb_multi_agent_gym
+        SOURCE_FILES use-multi-agent-gym/apb.cc
+        LIBRARIES_TO_LINK ${libai} ${libcore}
+)
