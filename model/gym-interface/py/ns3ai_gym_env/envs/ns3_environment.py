@@ -83,15 +83,28 @@ class Ns3Env(gym.Env):
 
             if boxContainerPb.dtype == pb.INT:
                 data = boxContainerPb.intData
+                dtype = np.int_
             elif boxContainerPb.dtype == pb.UINT:
                 data = boxContainerPb.uintData
+                dtype = np.uint
             elif boxContainerPb.dtype == pb.DOUBLE:
                 data = boxContainerPb.doubleData
+                dtype = np.float64
             else:
                 data = boxContainerPb.floatData
+                dtype = np.float32
 
-            # TODO: reshape using shape info
-            data = np.array(data)
+            data = np.array(data, dtype=dtype)
+            shape = tuple(boxContainerPb.shape)
+            if shape:
+                expected_size = int(np.prod(shape, dtype=np.int64))
+                if data.size != expected_size:
+                    raise ValueError(
+                        "ns3-ai Gym Box data has {} elements but shape {} requires {}".format(
+                            data.size, shape, expected_size
+                        )
+                    )
+                data = data.reshape(shape)
             return data
         elif dataContainerPb.type == pb.Tuple:
             tupleDataPb = pb.TupleDataContainer()
@@ -203,28 +216,36 @@ class Ns3Env(gym.Env):
         elif spaceType == spaces.Box:
             dataContainer.type = pb.Box
             boxContainerPb = pb.BoxDataContainer()
-            shape = [len(actions)]
-            boxContainerPb.shape.extend(shape)
+            action_array = np.asarray(actions, dtype=spaceDesc.dtype)
+            target_shape = tuple(spaceDesc.shape)
+            if action_array.shape != target_shape:
+                expected_size = int(np.prod(target_shape, dtype=np.int64))
+                if action_array.size != expected_size:
+                    raise ValueError(
+                        "ns3-ai Gym Box action shape {} cannot match expected shape {}".format(
+                            action_array.shape, target_shape
+                        )
+                    )
+                action_array = action_array.reshape(target_shape)
+            boxContainerPb.shape.extend(action_array.shape)
+            flat_actions = action_array.reshape(-1)
+            dtype = np.dtype(spaceDesc.dtype)
 
-            if spaceDesc.dtype in ['int', 'int8', 'int16', 'int32', 'int64']:
+            if np.issubdtype(dtype, np.signedinteger):
                 boxContainerPb.dtype = pb.INT
-                boxContainerPb.intData.extend(actions)
+                boxContainerPb.intData.extend(flat_actions.tolist())
 
-            elif spaceDesc.dtype in ['uint', 'uint8', 'uint16', 'uint32', 'uint64']:
+            elif np.issubdtype(dtype, np.unsignedinteger):
                 boxContainerPb.dtype = pb.UINT
-                boxContainerPb.uintData.extend(actions)
+                boxContainerPb.uintData.extend(flat_actions.tolist())
 
-            elif spaceDesc.dtype in ['float', 'float32', 'float64']:
-                boxContainerPb.dtype = pb.FLOAT
-                boxContainerPb.floatData.extend(actions)
-
-            elif spaceDesc.dtype in ['double']:
+            elif dtype == np.dtype(np.float64):
                 boxContainerPb.dtype = pb.DOUBLE
-                boxContainerPb.doubleData.extend(actions)
+                boxContainerPb.doubleData.extend(flat_actions.tolist())
 
             else:
                 boxContainerPb.dtype = pb.FLOAT
-                boxContainerPb.floatData.extend(actions)
+                boxContainerPb.floatData.extend(flat_actions.tolist())
 
             dataContainer.data.Pack(boxContainerPb)
 
@@ -232,9 +253,8 @@ class Ns3Env(gym.Env):
             dataContainer.type = pb.Tuple
             tupleDataPb = pb.TupleDataContainer()
 
-            spaceList = list(self.action_space.spaces)
             subDataList = []
-            for subAction, subActSpaceType in zip(actions, spaceList):
+            for subAction, subActSpaceType in zip(actions, spaceDesc.spaces):
                 subData = self._pack_data(subAction, subActSpaceType)
                 subDataList.append(subData)
 
@@ -247,7 +267,7 @@ class Ns3Env(gym.Env):
 
             subDataList = []
             for sName, subAction in actions.items():
-                subActSpaceType = self.action_space.spaces[sName]
+                subActSpaceType = spaceDesc.spaces[sName]
                 subData = self._pack_data(subAction, subActSpaceType)
                 subData.name = sName
                 subDataList.append(subData)
