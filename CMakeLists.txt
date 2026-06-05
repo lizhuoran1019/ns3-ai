@@ -8,6 +8,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 option(NS3AI_ENABLE_PYTHON_BINDINGS "Build ns3-ai Python binding modules" ON)
+set(NS3AI_GYM_MSG_BUFFER_SIZE "65536" CACHE STRING "Size in bytes of the fixed Gym interface shared-memory message buffer")
+add_compile_definitions(NS3_AI_GYM_MSG_BUFFER_SIZE=${NS3AI_GYM_MSG_BUFFER_SIZE})
 
 find_package(Boost REQUIRED COMPONENTS program_options)
 include_directories(${Boost_INCLUDE_DIRS})
