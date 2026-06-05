@@ -17,7 +17,7 @@ class Ns3VecEnv:
                  ns3Path,
                  num_envs,
                  ns3Settings=None,
-                 shmSize=4096,
+                 shmSize=1048576,
                  shmPrefixBase="ns3ai-gym-vec-env",
                  env=None,
                  make_env=None,
