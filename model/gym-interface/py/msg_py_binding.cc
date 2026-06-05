@@ -41,7 +41,10 @@ ValidateGymMsgSize(const Ns3AiGymMsg& msg)
 
 PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 {
+    using GymMsgInterface = ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
+
     m.attr("msg_buffer_size") = MSG_BUFFER_SIZE;
+    m.attr("default_sync_timeout_us") = GymMsgInterface::DEFAULT_SYNC_TIMEOUT_US;
 
     py::class_<Ns3AiGymMsg>(m, "Ns3AiGymMsg")
         .def(py::init<>())
@@ -55,7 +58,7 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
             return py::memoryview::from_memory(static_cast<void*>(msg.buffer), MSG_BUFFER_SIZE);
         });
 
-    py::class_<ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>>(m, "Ns3AiMsgInterfaceImpl")
+    py::class_<GymMsgInterface>(m, "Ns3AiMsgInterfaceImpl")
         .def(py::init<bool,
                       bool,
                       bool,
@@ -63,15 +66,31 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
                       const char*,
                       const char*,
                       const char*,
-                      const char*>())
-        .def("PyRecvBegin", &ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::PyRecvBegin)
-        .def("PyRecvEnd", &ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::PyRecvEnd)
-        .def("PySendBegin", &ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::PySendBegin)
-        .def("PySendEnd", &ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::PySendEnd)
-        .def("GetCpp2PyStruct",
-             &ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::GetCpp2PyStruct,
-             py::return_value_policy::reference)
-        .def("GetPy2CppStruct",
-             &ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::GetPy2CppStruct,
-             py::return_value_policy::reference);
+                      const char*,
+                      uint64_t,
+                      const char*,
+                      uint64_t,
+                      uint64_t,
+                      uint32_t,
+                      uint32_t>(),
+             py::arg("is_memory_creator"),
+             py::arg("use_vector"),
+             py::arg("handle_finish"),
+             py::arg("size") = 4096,
+             py::arg("segment_name") = "My Seg",
+             py::arg("cpp2py_msg_name") = "My Cpp to Python Msg",
+             py::arg("py2cpp_msg_name") = "My Python to Cpp Msg",
+             py::arg("lockable_name") = "My Lockable",
+             py::arg("sync_timeout_us") = GymMsgInterface::DEFAULT_SYNC_TIMEOUT_US,
+             py::arg("header_name") = "My Header",
+             py::arg("cpp2py_schema_hash") = 0,
+             py::arg("py2cpp_schema_hash") = 0,
+             py::arg("cpp2py_schema_version") = 0,
+             py::arg("py2cpp_schema_version") = 0)
+        .def("PyRecvBegin", &GymMsgInterface::PyRecvBegin)
+        .def("PyRecvEnd", &GymMsgInterface::PyRecvEnd)
+        .def("PySendBegin", &GymMsgInterface::PySendBegin)
+        .def("PySendEnd", &GymMsgInterface::PySendEnd)
+        .def("GetCpp2PyStruct", &GymMsgInterface::GetCpp2PyStruct, py::return_value_policy::reference)
+        .def("GetPy2CppStruct", &GymMsgInterface::GetPy2CppStruct, py::return_value_policy::reference);
 }
