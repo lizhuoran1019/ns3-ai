@@ -12,6 +12,7 @@ We created this example to demonstrate the basic usage of ns3-ai's two interface
 ### Cmake targets
 
 - `ns3ai_apb_gym`: A-Plus-B using Gym interface
+- `ns3ai_apb_multi_agent_gym`: A-Plus-B using multiple Gym agents in one ns-3 process
 - `ns3ai_apb_msg_stru`: A-Plus-B using message interface (struct-based)
 - `ns3ai_apb_msg_vec`: A-Plus-B using message interface (vector-based)
 
@@ -35,6 +36,32 @@ cd YOUR_NS3_DIRECTORY
 cd contrib/ai/examples/a-plus-b/use-gym
 python apb.py
 ```
+
+### Multi-agent Gym interface
+
+This example starts one ns-3 process and creates multiple C++ `OpenGymEnv` objects inside that process. Each agent uses an independent shared-memory namespace:
+
+```text
+ns3ai-apb-agent-0
+ns3ai-apb-agent-1
+ns3ai-apb-agent-2
+```
+
+Build the executable and Python bindings:
+
+```shell
+cd YOUR_NS3_DIRECTORY
+./ns3 build ns3ai_apb_multi_agent_gym
+```
+
+Run the Python driver:
+
+```bash
+cd contrib/ai/examples/a-plus-b/use-multi-agent-gym
+python apb.py
+```
+
+The Python driver creates all shared-memory channels first, launches the ns-3 executable once, initializes every agent channel, and then steps through all agents. A channel mismatch raises an exception, so the example tests whether agent-specific IPC isolation is working.
 
 ### Message interface (struct-based)
 
@@ -85,6 +112,21 @@ set: 5,1;
 get: 6;
 set: 10,6;
 get: 16;
+......
+```
+
+For the multi-agent Gym interface, the terminal prints one stream per agent:
+
+```text
+agent=0;step=0;set=4,10;
+agent=0;obs=4,10;act=14;
+agent=0;step=0;get=14;
+agent=1;step=0;set=2,8;
+agent=1;obs=2,8;act=10;
+agent=1;step=0;get=10;
+agent=2;step=0;set=3,6;
+agent=2;obs=3,6;act=9;
+agent=2;step=0;get=9;
 ......
 ```
 
