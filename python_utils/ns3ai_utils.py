@@ -70,6 +70,7 @@ def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
 
     cmd = [exec_path, 'run', pname]
     if setting:
+        cmd.append('--')
         cmd.extend(get_setting(setting))
 
     popen_kwargs = {
