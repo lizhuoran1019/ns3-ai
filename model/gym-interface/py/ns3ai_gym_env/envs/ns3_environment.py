@@ -253,9 +253,8 @@ class Ns3Env(gym.Env):
             dataContainer.type = pb.Tuple
             tupleDataPb = pb.TupleDataContainer()
 
-            spaceList = list(self.action_space.spaces)
             subDataList = []
-            for subAction, subActSpaceType in zip(actions, spaceList):
+            for subAction, subActSpaceType in zip(actions, spaceDesc.spaces):
                 subData = self._pack_data(subAction, subActSpaceType)
                 subDataList.append(subData)
 
@@ -268,7 +267,7 @@ class Ns3Env(gym.Env):
 
             subDataList = []
             for sName, subAction in actions.items():
-                subActSpaceType = self.action_space.spaces[sName]
+                subActSpaceType = spaceDesc.spaces[sName]
                 subData = self._pack_data(subAction, subActSpaceType)
                 subData.name = sName
                 subDataList.append(subData)
