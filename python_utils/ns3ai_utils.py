@@ -24,7 +24,7 @@ import psutil
 import time
 
 
-SIMULATION_EARLY_ENDING = 0.5   # wait and see if the subprocess is running after creation
+SIMULATION_EARLY_ENDING = 0.5
 DEFAULT_SYNC_TIMEOUT_US = 300000000
 
 
@@ -63,6 +63,12 @@ def _make_run_env(path, env=None):
     return run_env
 
 
+def _module_default(value, module, attr, fallback=0):
+    if value is None:
+        return getattr(module, attr, fallback)
+    return value
+
+
 def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
     path = os.path.abspath(path)
     run_env = _make_run_env(path, env)
@@ -90,23 +96,19 @@ def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
     return _format_cmd(cmd), proc
 
 
-# used to kill the ns-3 script process and its child processes
 def kill_proc_tree(p, timeout=None, on_terminate=None):
     print('ns3ai_utils: Killing subprocesses...')
     if isinstance(p, int):
         p = psutil.Process(p)
     elif not isinstance(p, psutil.Process):
         p = psutil.Process(p.pid)
-    ch = [p]+p.children(recursive=True)
+    ch = [p] + p.children(recursive=True)
     for c in ch:
         try:
-            # print("\t-- {}, pid={}, ppid={}".format(psutil.Process(c.pid).name(), c.pid, c.ppid()))
-            # print("\t   \"{}\"".format(" ".join(c.cmdline())))
             c.kill()
         except Exception:
             continue
-    succ, err = psutil.wait_procs(ch, timeout=timeout,
-                                  callback=on_terminate)
+    succ, err = psutil.wait_procs(ch, timeout=timeout, callback=on_terminate)
     return succ, err
 
 
@@ -114,12 +116,7 @@ class Ns3AiExperimentError(RuntimeError):
     pass
 
 
-# This class sets up the shared memory and runs the simulation process.
 class Experiment:
-    # init ns-3 environment
-    # \param[in] memSize : share memory size
-    # \param[in] targetName : program name of ns3
-    # \param[in] path : current working directory
     def __init__(self, targetName, ns3Path, msgModule,
                  handleFinish=False,
                  useVector=False, vectorSize=None,
@@ -130,13 +127,13 @@ class Experiment:
                  lockableName="My Lockable",
                  syncTimeoutUs=None,
                  headerName="My Header",
-                 cpp2pySchemaHash=0,
-                 py2cppSchemaHash=0,
-                 cpp2pySchemaVersion=0,
-                 py2cppSchemaVersion=0,
+                 cpp2pySchemaHash=None,
+                 py2cppSchemaHash=None,
+                 cpp2pySchemaVersion=None,
+                 py2cppSchemaVersion=None,
                  shmPrefix=None,
                  env=None):
-        self.targetName = targetName  # ns-3 target name, not file name
+        self.targetName = targetName
         self.ns3Path = os.path.abspath(ns3Path)
         self.msgModule = msgModule
         self.handleFinish = handleFinish
@@ -159,10 +156,10 @@ class Experiment:
         self.lockableName = lockableName
         self.syncTimeoutUs = syncTimeoutUs
         self.headerName = headerName
-        self.cpp2pySchemaHash = cpp2pySchemaHash
-        self.py2cppSchemaHash = py2cppSchemaHash
-        self.cpp2pySchemaVersion = cpp2pySchemaVersion
-        self.py2cppSchemaVersion = py2cppSchemaVersion
+        self.cpp2pySchemaHash = _module_default(cpp2pySchemaHash, msgModule, 'schema_hash')
+        self.py2cppSchemaHash = _module_default(py2cppSchemaHash, msgModule, 'schema_hash')
+        self.cpp2pySchemaVersion = _module_default(cpp2pySchemaVersion, msgModule, 'schema_version')
+        self.py2cppSchemaVersion = _module_default(py2cppSchemaVersion, msgModule, 'schema_version')
         self.env = env or {}
 
         self.msgInterface = msgModule.Ns3AiMsgInterfaceImpl(
@@ -202,9 +199,6 @@ class Experiment:
             pass
         print('ns3ai_utils: Experiment destroyed')
 
-    # run ns3 script in cmd with the setting being input
-    # \param[in] setting : ns3 script input parameters(default : None)
-    # \param[in] show_output : whether to show output or not(default : False)
     def run(self, setting=None, show_output=False, env=None):
         self.kill()
         run_env = self.env.copy()
@@ -213,7 +207,6 @@ class Experiment:
         self.simCmd, self.proc = run_single_ns3(
             self.ns3Path, self.targetName, setting=setting, env=run_env, show_output=show_output)
         print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
-        # raise if an early error occurred, such as wrong target name
         time.sleep(SIMULATION_EARLY_ENDING)
         if not self.isalive():
             stdout = None
@@ -243,10 +236,10 @@ class ParallelExperiment:
                  useVector=False, vectorSize=None,
                  shmSize=4096,
                  syncTimeoutUs=None,
-                 cpp2pySchemaHash=0,
-                 py2cppSchemaHash=0,
-                 cpp2pySchemaVersion=0,
-                 py2cppSchemaVersion=0,
+                 cpp2pySchemaHash=None,
+                 py2cppSchemaHash=None,
+                 cpp2pySchemaVersion=None,
+                 py2cppSchemaVersion=None,
                  shmPrefixBase='ns3ai-env',
                  env=None):
         if count <= 0:
