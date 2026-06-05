@@ -20,7 +20,9 @@ class Ns3VecEnv:
                  shmSize=4096,
                  shmPrefixBase="ns3ai-gym-vec-env",
                  env=None,
-                 make_env=None):
+                 make_env=None,
+                 launch_simulation=True,
+                 show_output=True):
         if num_envs <= 0:
             raise ValueError("num_envs must be positive")
 
@@ -45,6 +47,15 @@ class Ns3VecEnv:
                              shmPrefix=f"{shmPrefixBase}-{env_id}",
                              env=worker_env)
             self.envs.append(ns3_env)
+
+        if launch_simulation:
+            run_settings = dict(ns3Settings or {})
+            run_settings.setdefault("numAgents", self.num_envs)
+            self.envs[0].exp.run(setting=run_settings, show_output=show_output)
+
+        for env in self.envs:
+            env.initialize_env()
+            env.rx_env_state()
 
         self.single_observation_space = self.envs[0].observation_space
         self.single_action_space = self.envs[0].action_space
