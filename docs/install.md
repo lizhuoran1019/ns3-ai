@@ -36,10 +36,14 @@ git clone https://github.com/hust-diangroup/ns3-ai.git contrib/ai
 
 3. Setup Python interfaces.
 
+The generic message-interface utilities live in the source tree and can be installed directly. The Gym package contains generated protobuf code and a pybind extension module, so install it from the CMake build tree after `./ns3 build ai`.
+
 ```shell
 pip install -e contrib/ai/python_utils
-pip install -e contrib/ai/model/gym-interface/py
+pip install -e build/contrib/ai/python
 ```
+
+If your ns-3 build directory is not `build`, replace `build/contrib/ai/python` with the corresponding path under your configured CMake binary directory.
 
 4. Build the examples (optional)
 
