@@ -112,13 +112,14 @@ set(gym_interface_srcs
         model/gym-interface/cpp/spaces.cc
         ${NS3AI_GENERATED_CPP_DIR}/messages.pb.cc
 )
+# Keep generated protobuf headers out of build_lib HEADER_FILES: ns-3 validates this list during
+# configure, before custom commands have created messages.pb.h in the binary tree.
 set(gym_interface_hdrs
         model/gym-interface/cpp/ns3-ai-gym-interface.h
         model/gym-interface/cpp/ns3-ai-gym-env.h
         model/gym-interface/cpp/ns3-ai-vector-gym-env.h
         model/gym-interface/cpp/container.h
         model/gym-interface/cpp/spaces.h
-        ${NS3AI_GENERATED_CPP_DIR}/messages.pb.h
 )
 
 # protobuf_generate function is missing in some installations by package manager
