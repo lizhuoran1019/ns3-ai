@@ -47,6 +47,8 @@ class OpenGymVectorEnv : public OpenGymEnv
 
     Ptr<OpenGymInterface> GetOpenGymInterface(uint32_t envIndex) const;
 
+    void Initialize(uint32_t envIndex);
+    void InitializeAll();
     void Notify(uint32_t envIndex);
     void NotifyAll();
     void NotifySimulationEnd(uint32_t envIndex);
