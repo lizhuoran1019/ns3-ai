@@ -276,7 +276,9 @@ class Ns3Env(gym.Env):
                  shmSize=4096,
                  envId=None,
                  shmPrefix=None,
-                 env=None):
+                 env=None,
+                 autoStart=True,
+                 showOutput=True):
         if shmPrefix is None and envId is not None:
             shmPrefix = 'ns3ai-gym-env-{}'.format(envId)
         self.exp = Experiment(targetName, ns3Path, py_binding, shmSize=shmSize,
@@ -284,6 +286,7 @@ class Ns3Env(gym.Env):
         self.ns3Settings = ns3Settings
         self.envId = envId
         self.shmPrefix = shmPrefix
+        self.showOutput = showOutput
 
         self.newStateRx = False
         self.obsData = None
@@ -291,12 +294,21 @@ class Ns3Env(gym.Env):
         self.gameOver = False
         self.gameOverReason = None
         self.extraInfo = None
+        self.envDirty = False
+        self.action_space = None
+        self.observation_space = None
+        self.msgInterface = self.exp.msgInterface
 
-        self.msgInterface = self.exp.run(setting=self.ns3Settings, show_output=True)
+        if autoStart:
+            self.start(setting=self.ns3Settings, show_output=self.showOutput)
+
+    def start(self, setting=None, show_output=True):
+        self.msgInterface = self.exp.run(setting=setting, show_output=show_output)
         self.initialize_env()
         # get first observations
         self.rx_env_state()
         self.envDirty = False
+        return self
 
     def step(self, actions):
         self.send_actions(actions)
@@ -322,7 +334,7 @@ class Ns3Env(gym.Env):
         self.gameOverReason = None
         self.extraInfo = None
 
-        self.msgInterface = self.exp.run(setting=self.ns3Settings, show_output=True)
+        self.msgInterface = self.exp.run(setting=self.ns3Settings, show_output=self.showOutput)
         self.initialize_env()
         # get first observations
         self.rx_env_state()
