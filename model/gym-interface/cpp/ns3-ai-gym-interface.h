@@ -30,6 +30,10 @@
 #include <ns3/ptr.h>
 #include <ns3/type-id.h>
 
+#include <memory>
+#include <string>
+#include <unordered_map>
+
 namespace ns3
 {
 
@@ -41,9 +45,20 @@ class OpenGymInterface : public Object
 {
   public:
     static Ptr<OpenGymInterface> Get();
+    static Ptr<OpenGymInterface> Get(uint32_t envId);
+    static Ptr<OpenGymInterface> Get(const std::string& sharedMemoryPrefix);
+
     OpenGymInterface();
+    explicit OpenGymInterface(const std::string& sharedMemoryPrefix);
     ~OpenGymInterface() override;
     static TypeId GetTypeId();
+
+    void SetSharedMemoryPrefix(const std::string& sharedMemoryPrefix);
+    void SetSharedMemoryNames(std::string segmentName,
+                              std::string cpp2pyMsgName,
+                              std::string py2cppMsgName,
+                              std::string lockableName);
+    void SetSharedMemorySize(uint32_t size);
 
     void Init();
     void NotifyCurrentState();
@@ -75,11 +90,16 @@ class OpenGymInterface : public Object
 
   private:
     static Ptr<OpenGymInterface>* DoGet();
-    //    static void Delete();
+    static std::unordered_map<std::string, Ptr<OpenGymInterface>>* DoGetNamedInterfaces();
+
+    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* GetMsgInterface();
 
     bool m_simEnd;
     bool m_stopEnvRequested;
     bool m_initSimMsgSent;
+    uint32_t m_memorySize;
+    Ns3AiMsgInterfaceNames m_msgNames;
+    std::unique_ptr<Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>> m_msgInterface;
 
     Callback<Ptr<OpenGymSpace>> m_actionSpaceCb;
     Callback<Ptr<OpenGymSpace>> m_observationSpaceCb;

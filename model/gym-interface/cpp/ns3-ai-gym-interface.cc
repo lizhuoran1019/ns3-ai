@@ -35,6 +35,9 @@
 #include <ns3/log.h>
 #include <ns3/simulator.h>
 
+#include <cassert>
+#include <cstdlib>
+
 namespace ns3
 {
 
@@ -48,15 +51,43 @@ OpenGymInterface::Get()
     return *DoGet();
 }
 
+Ptr<OpenGymInterface>
+OpenGymInterface::Get(uint32_t envId)
+{
+    NS_LOG_FUNCTION(envId);
+    return Get("ns3ai-gym-env-" + std::to_string(envId));
+}
+
+Ptr<OpenGymInterface>
+OpenGymInterface::Get(const std::string& sharedMemoryPrefix)
+{
+    NS_LOG_FUNCTION(sharedMemoryPrefix);
+    auto interfaces = DoGetNamedInterfaces();
+    auto iter = interfaces->find(sharedMemoryPrefix);
+    if (iter != interfaces->end())
+    {
+        return iter->second;
+    }
+
+    Ptr<OpenGymInterface> interface = CreateObject<OpenGymInterface>();
+    interface->SetSharedMemoryPrefix(sharedMemoryPrefix);
+    interfaces->emplace(sharedMemoryPrefix, interface);
+    return interface;
+}
+
 OpenGymInterface::OpenGymInterface()
     : m_simEnd(false),
       m_stopEnvRequested(false),
-      m_initSimMsgSent(false)
+      m_initSimMsgSent(false),
+      m_memorySize(4096),
+      m_msgNames{"My Seg", "My Cpp to Python Msg", "My Python to Cpp Msg", "My Lockable"}
 {
-    auto interface = Ns3AiMsgInterface::Get();
-    interface->SetIsMemoryCreator(false);
-    interface->SetUseVector(false);
-    interface->SetHandleFinish(false);
+}
+
+OpenGymInterface::OpenGymInterface(const std::string& sharedMemoryPrefix)
+    : OpenGymInterface()
+{
+    SetSharedMemoryPrefix(sharedMemoryPrefix);
 }
 
 OpenGymInterface::~OpenGymInterface()
@@ -71,6 +102,54 @@ OpenGymInterface::GetTypeId()
                             .SetGroupName("OpenGym")
                             .AddConstructor<OpenGymInterface>();
     return tid;
+}
+
+void
+OpenGymInterface::SetSharedMemoryPrefix(const std::string& sharedMemoryPrefix)
+{
+    NS_LOG_FUNCTION(this << sharedMemoryPrefix);
+    Ns3AiMsgInterfaceNames names = Ns3AiMsgInterface::MakeNames(sharedMemoryPrefix);
+    SetSharedMemoryNames(names.m_segmentName,
+                         names.m_cpp2pyMsgName,
+                         names.m_py2cppMsgName,
+                         names.m_lockableName);
+}
+
+void
+OpenGymInterface::SetSharedMemoryNames(std::string segmentName,
+                                       std::string cpp2pyMsgName,
+                                       std::string py2cppMsgName,
+                                       std::string lockableName)
+{
+    NS_LOG_FUNCTION(this << segmentName << cpp2pyMsgName << py2cppMsgName << lockableName);
+    assert(!m_msgInterface && "shared-memory names must be set before the interface is opened");
+    m_msgNames = Ns3AiMsgInterfaceNames{segmentName, cpp2pyMsgName, py2cppMsgName, lockableName};
+}
+
+void
+OpenGymInterface::SetSharedMemorySize(uint32_t size)
+{
+    NS_LOG_FUNCTION(this << size);
+    assert(!m_msgInterface && "shared-memory size must be set before the interface is opened");
+    m_memorySize = size;
+}
+
+Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>*
+OpenGymInterface::GetMsgInterface()
+{
+    if (!m_msgInterface)
+    {
+        m_msgInterface = std::make_unique<Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>>(
+            false,
+            false,
+            false,
+            m_memorySize,
+            m_msgNames.m_segmentName.c_str(),
+            m_msgNames.m_cpp2pyMsgName.c_str(),
+            m_msgNames.m_py2cppMsgName.c_str(),
+            m_msgNames.m_lockableName.c_str());
+    }
+    return m_msgInterface.get();
 }
 
 void
@@ -101,8 +180,7 @@ OpenGymInterface::Init()
     }
 
     // get the interface
-    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface =
-        Ns3AiMsgInterface::Get()->GetInterface<Ns3AiGymMsg, Ns3AiGymMsg>();
+    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
 
     // send init msg to python
     msgInterface->CppSendBegin();
@@ -176,8 +254,7 @@ OpenGymInterface::NotifyCurrentState()
     envStateMsg.set_info(extraInfo);
 
     // get the interface
-    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface =
-        Ns3AiMsgInterface::Get()->GetInterface<Ns3AiGymMsg, Ns3AiGymMsg>();
+    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
 
     // send env state msg to python
     msgInterface->CppSendBegin();
@@ -395,6 +472,13 @@ OpenGymInterface::DoGet()
 {
     static Ptr<OpenGymInterface> ptr = CreateObject<OpenGymInterface>();
     return &ptr;
+}
+
+std::unordered_map<std::string, Ptr<OpenGymInterface>>*
+OpenGymInterface::DoGetNamedInterfaces()
+{
+    static std::unordered_map<std::string, Ptr<OpenGymInterface>> interfaces;
+    return &interfaces;
 }
 
 } // namespace ns3

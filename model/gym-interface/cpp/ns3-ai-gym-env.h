@@ -24,6 +24,8 @@
 
 #include <ns3/object.h>
 
+#include <string>
+
 namespace ns3
 {
 
@@ -83,6 +85,16 @@ class OpenGymEnv : public Object
      * associated to the environment
      */
     void SetOpenGymInterface(Ptr<OpenGymInterface> openGymInterface);
+
+    /**
+     * Sets the lower level gym interface by deterministic environment id.
+     */
+    void SetOpenGymInterface(uint32_t envId);
+
+    /**
+     * Sets the lower level gym interface by shared-memory namespace prefix.
+     */
+    void SetOpenGymInterface(const std::string& sharedMemoryPrefix);
 
     /**
      * Notify Python side about the states, and execute the actions

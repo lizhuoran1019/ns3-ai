@@ -34,11 +34,20 @@ def get_setting(setting_map):
     return ret
 
 
+def make_shm_names(prefix):
+    return {
+        'segName': '{}.seg'.format(prefix),
+        'cpp2pyMsgName': '{}.cpp2py'.format(prefix),
+        'py2cppMsgName': '{}.py2cpp'.format(prefix),
+        'lockableName': '{}.lock'.format(prefix),
+    }
+
+
 def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
-    if env is None:
-        env = {}
-    env.update(os.environ)
-    env['LD_LIBRARY_PATH'] = os.path.abspath(os.path.join(path, 'build', 'lib'))
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+    run_env['LD_LIBRARY_PATH'] = os.path.abspath(os.path.join(path, 'build', 'lib'))
     # import pdb; pdb.set_trace()
     exec_path = os.path.join(path, 'ns3')
     if not setting:
@@ -46,11 +55,11 @@ def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
     else:
         cmd = '{} run {} --{}'.format(exec_path, pname, get_setting(setting))
     if show_output:
-        proc = subprocess.Popen(cmd, shell=True, text=True, env=env,
+        proc = subprocess.Popen(cmd, shell=True, text=True, env=run_env,
                                 stdin=subprocess.PIPE,
                                 preexec_fn=os.setpgrp)
     else:
-        proc = subprocess.Popen(cmd, shell=True, text=True, env=env,
+        proc = subprocess.Popen(cmd, shell=True, text=True, env=run_env,
                                 stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
@@ -72,7 +81,7 @@ def kill_proc_tree(p, timeout=None, on_terminate=None):
             # print("\t-- {}, pid={}, ppid={}".format(psutil.Process(c.pid).name(), c.pid, c.ppid()))
             # print("\t   \"{}\"".format(" ".join(c.cmdline())))
             c.kill()
-        except Exception as e:
+        except Exception:
             continue
     succ, err = psutil.wait_procs(ch, timeout=timeout,
                                   callback=on_terminate)
@@ -93,8 +102,6 @@ def sigint_handler(sig, frame):
 
 # This class sets up the shared memory and runs the simulation process.
 class Experiment:
-    _created = False
-
     # init ns-3 environment
     # \param[in] memSize : share memory size
     # \param[in] targetName : program name of ns3
@@ -106,21 +113,29 @@ class Experiment:
                  segName="My Seg",
                  cpp2pyMsgName="My Cpp to Python Msg",
                  py2cppMsgName="My Python to Cpp Msg",
-                 lockableName="My Lockable"):
-        if self._created:
-            raise Exception('ns3ai_utils: Error: Experiment is singleton')
-        self._created = True
+                 lockableName="My Lockable",
+                 shmPrefix=None,
+                 env=None):
         self.targetName = targetName  # ns-3 target name, not file name
+        self.ns3Path = ns3Path
         os.chdir(ns3Path)
         self.msgModule = msgModule
         self.handleFinish = handleFinish
         self.useVector = useVector
         self.vectorSize = vectorSize
         self.shmSize = shmSize
+        if shmPrefix is not None:
+            names = make_shm_names(shmPrefix)
+            segName = names['segName']
+            cpp2pyMsgName = names['cpp2pyMsgName']
+            py2cppMsgName = names['py2cppMsgName']
+            lockableName = names['lockableName']
+        self.shmPrefix = shmPrefix
         self.segName = segName
         self.cpp2pyMsgName = cpp2pyMsgName
         self.py2cppMsgName = py2cppMsgName
         self.lockableName = lockableName
+        self.env = env or {}
 
         self.msgInterface = msgModule.Ns3AiMsgInterfaceImpl(
             True, self.useVector, self.handleFinish,
@@ -144,10 +159,13 @@ class Experiment:
     # run ns3 script in cmd with the setting being input
     # \param[in] setting : ns3 script input parameters(default : None)
     # \param[in] show_output : whether to show output or not(default : False)
-    def run(self, setting=None, show_output=False):
+    def run(self, setting=None, show_output=False, env=None):
         self.kill()
+        run_env = self.env.copy()
+        if env:
+            run_env.update(env)
         self.simCmd, self.proc = run_single_ns3(
-            './', self.targetName, setting=setting, show_output=show_output)
+            './', self.targetName, setting=setting, env=run_env, show_output=show_output)
         print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
         # exit if an early error occurred, such as wrong target name
         time.sleep(SIMULATION_EARLY_ENDING)
@@ -167,4 +185,50 @@ class Experiment:
         return self.proc.poll() is None
 
 
-__all__ = ['Experiment']
+class ParallelExperiment:
+    def __init__(self, count, targetName, ns3Path, msgModule,
+                 handleFinish=False,
+                 useVector=False, vectorSize=None,
+                 shmSize=4096,
+                 shmPrefixBase='ns3ai-env',
+                 env=None):
+        if count <= 0:
+            raise ValueError('ns3ai_utils: count must be positive')
+        self.experiments = []
+        for i in range(count):
+            prefix = '{}-{}'.format(shmPrefixBase, i)
+            self.experiments.append(
+                Experiment(targetName, ns3Path, msgModule,
+                           handleFinish=handleFinish,
+                           useVector=useVector,
+                           vectorSize=vectorSize,
+                           shmSize=shmSize,
+                           shmPrefix=prefix,
+                           env=env)
+            )
+
+    def run_all(self, settings=None, show_output=False, envs=None):
+        interfaces = []
+        for i, exp in enumerate(self.experiments):
+            setting = None
+            if isinstance(settings, list):
+                setting = settings[i]
+            elif isinstance(settings, dict):
+                setting = settings.copy()
+            run_env = None
+            if isinstance(envs, list):
+                run_env = envs[i]
+            elif isinstance(envs, dict):
+                run_env = envs.copy()
+            interfaces.append(exp.run(setting=setting, show_output=show_output, env=run_env))
+        return interfaces
+
+    def kill(self):
+        for exp in self.experiments:
+            exp.kill()
+
+    def __del__(self):
+        self.kill()
+
+
+__all__ = ['Experiment', 'ParallelExperiment', 'make_shm_names']

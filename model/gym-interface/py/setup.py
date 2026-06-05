@@ -15,11 +15,13 @@
 #
 # Author: Muyuan Shen <muyuan_shen@hust.edu.cn>
 
-
-from setuptools import setup
+from setuptools import find_packages, setup
 
 setup(
     name="ns3ai_gym_env",
     version="0.0.1",
+    packages=find_packages(),
+    package_data={"ns3ai_gym_env": ["*.so", "*.pyd", "*.dll", "*.dylib", "messages_pb2.py"]},
+    include_package_data=True,
     install_requires=["numpy", "gymnasium", "protobuf"],
 )

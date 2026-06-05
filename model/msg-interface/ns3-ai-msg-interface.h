@@ -24,14 +24,20 @@
 
 #include <ns3/singleton.h>
 
-#include <cstddef>
-#include <cstdint>
-#include <iostream>
-#include <string>
-#include <vector>
 #include <boost/interprocess/allocators/allocator.hpp>
 #include <boost/interprocess/containers/vector.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
+
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <typeinfo>
+#include <unordered_map>
+#include <vector>
 
 namespace ns3
 {
@@ -49,10 +55,30 @@ struct Ns3AiMsgSync
 };
 
 /**
+ * \brief Names of the shared-memory objects used by one msg interface instance.
+ */
+struct Ns3AiMsgInterfaceNames
+{
+    std::string m_segmentName;
+    std::string m_cpp2pyMsgName;
+    std::string m_py2cppMsgName;
+    std::string m_lockableName;
+};
+
+/**
+ * \brief Type-erased base class for keeping typed message interfaces in one registry.
+ */
+class Ns3AiMsgInterfaceBase
+{
+  public:
+    virtual ~Ns3AiMsgInterfaceBase() = default;
+};
+
+/**
  * \brief A template class implementation of the message interface
  */
 template <typename Cpp2PyMsgType, typename Py2CppMsgType>
-class Ns3AiMsgInterfaceImpl
+class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 {
   public:
     Ns3AiMsgInterfaceImpl() = delete;
@@ -65,7 +91,12 @@ class Ns3AiMsgInterfaceImpl
                                    const char* cpp2py_msg_name = "My Cpp to Python Msg",
                                    const char* py2cpp_msg_name = "My Python to Cpp Msg",
                                    const char* lockable_name = "My Lockable")
-        : m_isCreator(is_memory_creator),
+        : m_cpp2pyStruct(nullptr),
+          m_py2CppStruct(nullptr),
+          m_cpp2pyVector(nullptr),
+          m_py2cppVector(nullptr),
+          m_sync(nullptr),
+          m_isCreator(is_memory_creator),
           m_useVector(use_vector),
           m_handleFinish(handle_finish),
           m_segName(segment_name),
@@ -75,47 +106,44 @@ class Ns3AiMsgInterfaceImpl
         if (m_isCreator)
         {
             shared_memory_object::remove(m_segName.c_str());
-            static managed_shared_memory segment(create_only, m_segName.c_str(), size);
+            m_segment = std::make_unique<managed_shared_memory>(create_only, m_segName.c_str(), size);
             if (m_useVector)
             {
-                static const Cpp2PyMsgAllocator alloc_env(segment.get_segment_manager());
-                static const Cpp2PyMsgAllocator alloc_act(segment.get_segment_manager());
-                m_cpp2pyVector = segment.construct<Cpp2PyMsgVector>(cpp2py_msg_name)(alloc_env);
-                m_py2cppVector = segment.construct<Py2CppMsgVector>(py2cpp_msg_name)(alloc_act);
-                m_cpp2pyStruct = nullptr;
-                m_py2CppStruct = nullptr;
+                const Cpp2PyMsgAllocator alloc_env(m_segment->get_segment_manager());
+                const Py2CppMsgAllocator alloc_act(m_segment->get_segment_manager());
+                m_cpp2pyVector = m_segment->construct<Cpp2PyMsgVector>(cpp2py_msg_name)(alloc_env);
+                m_py2cppVector = m_segment->construct<Py2CppMsgVector>(py2cpp_msg_name)(alloc_act);
             }
             else
             {
-                m_cpp2pyVector = nullptr;
-                m_py2cppVector = nullptr;
-                m_cpp2pyStruct = segment.construct<Cpp2PyMsgType>(cpp2py_msg_name)();
-                m_py2CppStruct = segment.construct<Py2CppMsgType>(py2cpp_msg_name)();
+                m_cpp2pyStruct = m_segment->construct<Cpp2PyMsgType>(cpp2py_msg_name)();
+                m_py2CppStruct = m_segment->construct<Py2CppMsgType>(py2cpp_msg_name)();
             }
-            m_sync = segment.construct<Ns3AiMsgSync>(lockable_name)();
+            m_sync = m_segment->construct<Ns3AiMsgSync>(lockable_name)();
         }
         else
         {
-            static managed_shared_memory segment(open_only, segment_name);
+            m_segment = std::make_unique<managed_shared_memory>(open_only, segment_name);
             if (m_useVector)
             {
-                m_cpp2pyVector = segment.find<Cpp2PyMsgVector>(cpp2py_msg_name).first;
-                m_py2cppVector = segment.find<Py2CppMsgVector>(py2cpp_msg_name).first;
-                m_cpp2pyStruct = nullptr;
-                m_py2CppStruct = nullptr;
+                m_cpp2pyVector = m_segment->find<Cpp2PyMsgVector>(cpp2py_msg_name).first;
+                m_py2cppVector = m_segment->find<Py2CppMsgVector>(py2cpp_msg_name).first;
+                assert(m_cpp2pyVector != nullptr);
+                assert(m_py2cppVector != nullptr);
             }
             else
             {
-                m_cpp2pyVector = nullptr;
-                m_py2cppVector = nullptr;
-                m_cpp2pyStruct = segment.find<Cpp2PyMsgType>(cpp2py_msg_name).first;
-                m_py2CppStruct = segment.find<Py2CppMsgType>(py2cpp_msg_name).first;
+                m_cpp2pyStruct = m_segment->find<Cpp2PyMsgType>(cpp2py_msg_name).first;
+                m_py2CppStruct = m_segment->find<Py2CppMsgType>(py2cpp_msg_name).first;
+                assert(m_cpp2pyStruct != nullptr);
+                assert(m_py2CppStruct != nullptr);
             }
-            m_sync = segment.find<Ns3AiMsgSync>(lockable_name).first;
+            m_sync = m_segment->find<Ns3AiMsgSync>(lockable_name).first;
+            assert(m_sync != nullptr);
         }
     };
 
-    ~Ns3AiMsgInterfaceImpl()
+    ~Ns3AiMsgInterfaceImpl() override
     {
         if (m_isCreator)
         {
@@ -123,7 +151,7 @@ class Ns3AiMsgInterfaceImpl
         }
         else
         {
-            if (m_handleFinish)
+            if (m_handleFinish && !m_isFinished)
             {
                 CppSetFinished();
             }
@@ -228,6 +256,10 @@ class Ns3AiMsgInterfaceImpl
     void CppSetFinished()
     {
         assert(m_handleFinish);
+        if (m_isFinished)
+        {
+            return;
+        }
         m_isFinished = true;
         CppSendBegin();
         m_sync->m_isFinished = true;
@@ -286,6 +318,8 @@ class Ns3AiMsgInterfaceImpl
     };
 
   private:
+    std::unique_ptr<boost::interprocess::managed_shared_memory> m_segment;
+
     Cpp2PyMsgType* m_cpp2pyStruct;
     Py2CppMsgType* m_py2CppStruct;
     Cpp2PyMsgVector* m_cpp2pyVector;
@@ -300,12 +334,22 @@ class Ns3AiMsgInterfaceImpl
 };
 
 /**
- * \brief The message interface, a singleton class
+ * \brief The message interface, a singleton class with named interface instances.
  */
-
 class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
 {
   public:
+    /**
+     * Builds deterministic object names for one independent shared-memory namespace.
+     */
+    static Ns3AiMsgInterfaceNames MakeNames(const std::string& prefix)
+    {
+        return Ns3AiMsgInterfaceNames{prefix + ".seg",
+                                      prefix + ".cpp2py",
+                                      prefix + ".py2cpp",
+                                      prefix + ".lock"};
+    };
+
     /**
      * Sets if this side (C++ or Python) is the memory creator.
      * Configuration on two sides must be different
@@ -360,33 +404,104 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
     };
 
     /**
-     * Gets the impl which has semaphore (synchronization)
-     * methods
+     * Sets all names from one namespace prefix. Useful for multiple agents or
+     * parallel ns-3 subprocesses, where each instance must use isolated names.
+     */
+    void SetNamesFromPrefix(const std::string& prefix)
+    {
+        Ns3AiMsgInterfaceNames names = MakeNames(prefix);
+        SetNames(names.m_segmentName, names.m_cpp2pyMsgName, names.m_py2cppMsgName, names.m_lockableName);
+    };
+
+    /**
+     * Gets the impl which has semaphore (synchronization) methods.
+     * The old no-argument API remains available and uses the current settings.
      */
     template <typename Cpp2PyMsgType, typename Py2CppMsgType>
     Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface()
     {
-        static Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType> interface(
+        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(m_segmentName,
+                                                          m_cpp2pyMsgName,
+                                                          m_py2cppMsgName,
+                                                          m_lockableName,
+                                                          "default");
+    };
+
+    /**
+     * Gets an interface under deterministic names produced from an instance id.
+     */
+    template <typename Cpp2PyMsgType, typename Py2CppMsgType>
+    Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(const std::string& instanceId)
+    {
+        Ns3AiMsgInterfaceNames names = MakeNames(instanceId);
+        return GetInterface<Cpp2PyMsgType, Py2CppMsgType>(names.m_segmentName,
+                                                          names.m_cpp2pyMsgName,
+                                                          names.m_py2cppMsgName,
+                                                          names.m_lockableName,
+                                                          instanceId);
+    };
+
+    /**
+     * Gets an interface under explicitly supplied shared-memory object names.
+     */
+    template <typename Cpp2PyMsgType, typename Py2CppMsgType>
+    Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>* GetInterface(
+        const std::string& segmentName,
+        const std::string& cpp2pyMsgName,
+        const std::string& py2cppMsgName,
+        const std::string& lockableName,
+        const std::string& instanceId = "custom")
+    {
+        const std::string key = BuildInterfaceKey<Cpp2PyMsgType, Py2CppMsgType>(instanceId,
+                                                                                segmentName,
+                                                                                cpp2pyMsgName,
+                                                                                py2cppMsgName,
+                                                                                lockableName);
+        auto iter = m_interfaces.find(key);
+        if (iter != m_interfaces.end())
+        {
+            return static_cast<Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>*>(iter->second.get());
+        }
+
+        auto interface = std::make_unique<Ns3AiMsgInterfaceImpl<Cpp2PyMsgType, Py2CppMsgType>>(
             this->m_isMemoryCreator,
             this->m_useVector,
             this->m_handleFinish,
             this->m_size,
-            this->m_segmentName.c_str(),
-            this->m_cpp2pyMsgName.c_str(),
-            this->m_py2cppMsgName.c_str(),
-            this->m_lockableName.c_str());
-        return &interface;
+            segmentName.c_str(),
+            cpp2pyMsgName.c_str(),
+            py2cppMsgName.c_str(),
+            lockableName.c_str());
+        auto rawInterface = interface.get();
+        m_interfaces.emplace(key, std::move(interface));
+        return rawInterface;
     };
 
   private:
-    bool m_isMemoryCreator;
-    bool m_useVector;
-    bool m_handleFinish;
+    template <typename Cpp2PyMsgType, typename Py2CppMsgType>
+    std::string BuildInterfaceKey(const std::string& instanceId,
+                                  const std::string& segmentName,
+                                  const std::string& cpp2pyMsgName,
+                                  const std::string& py2cppMsgName,
+                                  const std::string& lockableName) const
+    {
+        std::ostringstream oss;
+        oss << typeid(Cpp2PyMsgType).name() << '|' << typeid(Py2CppMsgType).name() << '|'
+            << instanceId << '|' << segmentName << '|' << cpp2pyMsgName << '|' << py2cppMsgName
+            << '|' << lockableName << '|' << m_isMemoryCreator << '|' << m_useVector << '|'
+            << m_handleFinish << '|' << m_size;
+        return oss.str();
+    };
+
+    bool m_isMemoryCreator{false};
+    bool m_useVector{false};
+    bool m_handleFinish{false};
     uint32_t m_size = 4096;
     std::string m_segmentName = "My Seg";
     std::string m_cpp2pyMsgName = "My Cpp to Python Msg";
     std::string m_py2cppMsgName = "My Python to Cpp Msg";
     std::string m_lockableName = "My Lockable";
+    std::unordered_map<std::string, std::unique_ptr<Ns3AiMsgInterfaceBase>> m_interfaces;
 };
 
 } // namespace ns3

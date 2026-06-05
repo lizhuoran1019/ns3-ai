@@ -65,6 +65,18 @@ OpenGymEnv::SetOpenGymInterface(Ptr<OpenGymInterface> openGymInterface)
 }
 
 void
+OpenGymEnv::SetOpenGymInterface(uint32_t envId)
+{
+    SetOpenGymInterface(OpenGymInterface::Get(envId));
+}
+
+void
+OpenGymEnv::SetOpenGymInterface(const std::string& sharedMemoryPrefix)
+{
+    SetOpenGymInterface(OpenGymInterface::Get(sharedMemoryPrefix));
+}
+
+void
 OpenGymEnv::Notify()
 {
     NS_LOG_FUNCTION(this);
