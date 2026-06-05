@@ -36,13 +36,80 @@
 #include <ns3/simulator.h>
 
 #include <cassert>
-#include <cstdlib>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
 
 namespace ns3
 {
 
 NS_LOG_COMPONENT_DEFINE("OpenGymInterface");
 NS_OBJECT_ENSURE_REGISTERED(OpenGymInterface);
+
+namespace
+{
+
+void
+SerializeGymMessageOrThrow(const google::protobuf::MessageLite& message,
+                           Ns3AiGymMsg* target,
+                           const char* messageName)
+{
+    const auto messageSize = message.ByteSizeLong();
+    if (messageSize > MSG_BUFFER_SIZE)
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai Gym " << messageName << " message is " << messageSize
+            << " bytes, which exceeds the configured shared-memory buffer of " << MSG_BUFFER_SIZE
+            << " bytes. Increase NS3AI_GYM_MSG_BUFFER_SIZE when configuring ns-3.";
+        throw std::runtime_error(oss.str());
+    }
+    if (messageSize > std::numeric_limits<uint32_t>::max())
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai Gym " << messageName
+            << " message is too large to encode in the message header.";
+        throw std::runtime_error(oss.str());
+    }
+
+    target->size = static_cast<uint32_t>(messageSize);
+    if (!message.SerializeToArray(target->buffer, static_cast<int>(target->size)))
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai Gym failed to serialize " << messageName << " message.";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+void
+ParseGymMessageOrThrow(google::protobuf::MessageLite* message,
+                       const Ns3AiGymMsg* source,
+                       const char* messageName)
+{
+    if (source->size > MSG_BUFFER_SIZE)
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai Gym received " << messageName << " message with declared size "
+            << source->size << " bytes, which exceeds the configured shared-memory buffer of "
+            << MSG_BUFFER_SIZE << " bytes.";
+        throw std::runtime_error(oss.str());
+    }
+    if (!message->ParseFromArray(source->buffer, static_cast<int>(source->size)))
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai Gym failed to parse " << messageName << " message.";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+void
+HandleStopRequest(OpenGymInterface* interface)
+{
+    NS_LOG_DEBUG("---Stop requested: true");
+    Simulator::Stop();
+    Simulator::Destroy();
+}
+
+} // namespace
 
 Ptr<OpenGymInterface>
 OpenGymInterface::Get()
@@ -180,16 +247,12 @@ OpenGymInterface::Init()
     Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
 
     msgInterface->CppSendBegin();
-    msgInterface->GetCpp2PyStruct()->size = simInitMsg.ByteSizeLong();
-    assert(msgInterface->GetCpp2PyStruct()->size <= MSG_BUFFER_SIZE);
-    simInitMsg.SerializeToArray(msgInterface->GetCpp2PyStruct()->buffer,
-                                msgInterface->GetCpp2PyStruct()->size);
+    SerializeGymMessageOrThrow(simInitMsg, msgInterface->GetCpp2PyStruct(), "SimInitMsg");
     msgInterface->CppSendEnd();
 
     ns3_ai_gym::SimInitAck simInitAck;
     msgInterface->CppRecvBegin();
-    simInitAck.ParseFromArray(msgInterface->GetPy2CppStruct()->buffer,
-                              msgInterface->GetPy2CppStruct()->size);
+    ParseGymMessageOrThrow(&simInitAck, msgInterface->GetPy2CppStruct(), "SimInitAck");
     msgInterface->CppRecvEnd();
 
     bool done = simInitAck.done();
@@ -197,11 +260,9 @@ OpenGymInterface::Init()
     bool stopSim = simInitAck.stopsimreq();
     if (stopSim)
     {
-        NS_LOG_DEBUG("---Stop requested: " << stopSim);
         m_stopEnvRequested = true;
-        Simulator::Stop();
-        Simulator::Destroy();
-        std::exit(0);
+        HandleStopRequest(this);
+        return;
     }
 }
 
@@ -248,10 +309,7 @@ OpenGymInterface::SendCurrentState()
 
     Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
     msgInterface->CppSendBegin();
-    msgInterface->GetCpp2PyStruct()->size = envStateMsg.ByteSizeLong();
-    assert(msgInterface->GetCpp2PyStruct()->size <= MSG_BUFFER_SIZE);
-    envStateMsg.SerializeToArray(msgInterface->GetCpp2PyStruct()->buffer,
-                                 msgInterface->GetCpp2PyStruct()->size);
+    SerializeGymMessageOrThrow(envStateMsg, msgInterface->GetCpp2PyStruct(), "EnvStateMsg");
     msgInterface->CppSendEnd();
     m_stateAwaitingAction = true;
 }
@@ -267,8 +325,7 @@ OpenGymInterface::ReceiveActions()
     Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
     ns3_ai_gym::EnvActMsg envActMsg;
     msgInterface->CppRecvBegin();
-    envActMsg.ParseFromArray(msgInterface->GetPy2CppStruct()->buffer,
-                             msgInterface->GetPy2CppStruct()->size);
+    ParseGymMessageOrThrow(&envActMsg, msgInterface->GetPy2CppStruct(), "EnvActMsg");
     msgInterface->CppRecvEnd();
     m_stateAwaitingAction = false;
 
@@ -280,11 +337,9 @@ OpenGymInterface::ReceiveActions()
     bool stopSim = envActMsg.stopsimreq();
     if (stopSim)
     {
-        NS_LOG_DEBUG("---Stop requested: " << stopSim);
         m_stopEnvRequested = true;
-        Simulator::Stop();
-        Simulator::Destroy();
-        std::exit(0);
+        HandleStopRequest(this);
+        return;
     }
 
     ns3_ai_gym::DataContainer actDataContainerPbMsg = envActMsg.actdata();
