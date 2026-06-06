@@ -530,9 +530,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             {
                 return;
             }
-            EnsureSessionState(Ns3AiMsgSessionState::Ready, "RequestClose");
+            EnsureSessionStateReadyOrRunning("RequestClose");
         }
-        EnsureSessionState(Ns3AiMsgSessionState::Ready, "RequestClose");
+        EnsureSessionStateReadyOrRunning("RequestClose");
         AtomicStore8(&m_sync->m_closeReason, static_cast<uint8_t>(reason));
         AtomicStore8(&m_sync->m_closeRequester, static_cast<uint8_t>(peer));
         AtomicStore8(&m_sync->m_closeAcknowledger, 0);
@@ -574,6 +574,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void CppSendBegin()
     {
+        TryTransitionSessionToRunning();
         TransitionPeer(Ns3AiMsgPeer::Cpp,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Sending,
@@ -587,6 +588,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryCppSendBegin()
     {
+        TryTransitionSessionToRunning();
         if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Sending))
@@ -610,6 +612,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void CppRecvBegin()
     {
+        TryTransitionSessionToRunning();
         TransitionPeer(Ns3AiMsgPeer::Cpp,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Receiving,
@@ -623,6 +626,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryCppRecvBegin()
     {
+        TryTransitionSessionToRunning();
         if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Receiving))
@@ -668,6 +672,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void PyRecvBegin()
     {
+        TryTransitionSessionToRunning();
         if (!TryPyRecvBegin())
         {
             ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag", Ns3AiMsgPeer::Py);
@@ -676,6 +681,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryPyRecvBegin()
     {
+        TryTransitionSessionToRunning();
         m_pyRecvHasCpp2PySlot = false;
         if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
                                Ns3AiMsgPeerState::Ready,
@@ -712,6 +718,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void PySendBegin()
     {
+        TryTransitionSessionToRunning();
         TransitionPeer(Ns3AiMsgPeer::Py,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Sending,
@@ -725,6 +732,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryPySendBegin()
     {
+        TryTransitionSessionToRunning();
         if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Sending))
@@ -904,6 +912,29 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             std::ostringstream oss;
             oss << "ns3-ai message interface invalid session state in " << operation << ": expected "
                 << expected << ", got " << actual << ".";
+            throw std::runtime_error(oss.str());
+        }
+    };
+
+    void TryTransitionSessionToRunning() const
+    {
+        uint8_t expected = static_cast<uint8_t>(Ns3AiMsgSessionState::Ready);
+        __atomic_compare_exchange_n(const_cast<uint8_t*>(&m_sync->m_sessionState),
+                                    &expected,
+                                    static_cast<uint8_t>(Ns3AiMsgSessionState::Running),
+                                    false,
+                                    __ATOMIC_ACQ_REL,
+                                    __ATOMIC_ACQUIRE);
+    };
+
+    void EnsureSessionStateReadyOrRunning(const char* operation) const
+    {
+        const auto actual = GetSessionState();
+        if (actual != Ns3AiMsgSessionState::Ready && actual != Ns3AiMsgSessionState::Running)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface invalid session state in " << operation
+                << ": expected ready or running, got " << actual << ".";
             throw std::runtime_error(oss.str());
         }
     };

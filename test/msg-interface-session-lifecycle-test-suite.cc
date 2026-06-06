@@ -147,6 +147,17 @@ class SessionCloseHandshakeTestCase : public TestCase
             1000,
             names.m_headerName.c_str());
 
+        // 通过一次数据交换将会话状态推进到 RUNNING
+        creator.CppSendBegin();
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Running,
+                              "First data exchange moves the session to RUNNING");
+        creator.CppSendEnd();
+
+        opener.PyRecvBegin();
+        opener.PyRecvEnd();
+
+        // 从 RUNNING 状态发起关闭
         creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
