@@ -233,6 +233,80 @@ class SessionTimeoutErrorTestCase : public TestCase
     }
 };
 
+class SessionClosingBlocksDataExchangeTestCase : public TestCase
+{
+  public:
+    SessionClosingBlocksDataExchangeTestCase()
+        : TestCase("shared-memory session blocks data exchange while closing")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("closing-blocks-data"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true,
+            false,
+            true,
+            4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str());
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false,
+            false,
+            true,
+            4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str());
+
+        creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
+
+        NS_TEST_EXPECT_MSG_EQ(creator.TryCppSendBegin(),
+                              false,
+                              "C++ try-send is rejected while the session is closing");
+        NS_TEST_EXPECT_MSG_EQ(creator.TryCppRecvBegin(),
+                              false,
+                              "C++ try-recv is rejected while the session is closing");
+        NS_TEST_EXPECT_MSG_EQ(opener.TryPySendBegin(),
+                              false,
+                              "Python try-send is rejected while the session is closing");
+        NS_TEST_EXPECT_MSG_EQ(opener.TryPyRecvBegin(),
+                              false,
+                              "Python try-recv is rejected while the session is closing");
+
+        bool blocked = false;
+        try
+        {
+            creator.CppSendBegin();
+        }
+        catch (const std::runtime_error&)
+        {
+            blocked = true;
+        }
+
+        NS_TEST_EXPECT_MSG_EQ(blocked,
+                              true,
+                              "Blocking send is rejected immediately while the session is closing");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Closing,
+                              "Rejected data exchange does not overwrite the close state");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::None,
+                              "Rejecting data exchange during close is not a peer error");
+    }
+};
+
 class SessionPeerDeathErrorTestCase : public TestCase
 {
   public:
@@ -464,6 +538,7 @@ class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
         AddTestCase(new SessionReadyHandshakeTestCase, TestCase::QUICK);
         AddTestCase(new SessionCloseHandshakeTestCase, TestCase::QUICK);
         AddTestCase(new SessionTimeoutErrorTestCase, TestCase::QUICK);
+        AddTestCase(new SessionClosingBlocksDataExchangeTestCase, TestCase::QUICK);
         AddTestCase(new SessionPeerDeathErrorTestCase, TestCase::QUICK);
         AddTestCase(new SessionStaleGenerationErrorTestCase, TestCase::QUICK);
         AddTestCase(new SessionProtocolMismatchErrorTestCase, TestCase::QUICK);

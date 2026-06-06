@@ -530,7 +530,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             {
                 return;
             }
-            EnsureSessionStateReadyOrRunning("RequestClose");
         }
         EnsureSessionStateReadyOrRunning("RequestClose");
         AtomicStore8(&m_sync->m_closeReason, static_cast<uint8_t>(reason));
@@ -574,7 +573,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void CppSendBegin()
     {
-        TryTransitionSessionToRunning();
+        BeginDataExchangeOrThrow("CppSendBegin");
         TransitionPeer(Ns3AiMsgPeer::Cpp,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Sending,
@@ -588,7 +587,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryCppSendBegin()
     {
-        TryTransitionSessionToRunning();
+        if (!TryBeginDataExchange())
+        {
+            return false;
+        }
         if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Sending))
@@ -612,7 +614,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void CppRecvBegin()
     {
-        TryTransitionSessionToRunning();
+        BeginDataExchangeOrThrow("CppRecvBegin");
         TransitionPeer(Ns3AiMsgPeer::Cpp,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Receiving,
@@ -626,7 +628,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryCppRecvBegin()
     {
-        TryTransitionSessionToRunning();
+        if (!TryBeginDataExchange())
+        {
+            return false;
+        }
         if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Receiving))
@@ -672,8 +677,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void PyRecvBegin()
     {
-        TryTransitionSessionToRunning();
-        if (!TryPyRecvBegin())
+        BeginDataExchangeOrThrow("PyRecvBegin");
+        if (!TryPyRecvBeginAfterSessionReady())
         {
             ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag", Ns3AiMsgPeer::Py);
         }
@@ -681,28 +686,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryPyRecvBegin()
     {
-        TryTransitionSessionToRunning();
-        m_pyRecvHasCpp2PySlot = false;
-        if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
-                               Ns3AiMsgPeerState::Ready,
-                               Ns3AiMsgPeerState::Receiving))
+        if (!TryBeginDataExchange())
         {
             return false;
         }
-        if (!WaitForCpp2PyDataOrFinish())
-        {
-            MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
-            return false;
-        }
-        if (m_handleFinish)
-        {
-            m_isFinished = m_sync->m_isFinished;
-        }
-        if (m_isFinished && !m_pyRecvHasCpp2PySlot)
-        {
-            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
-        }
-        return true;
+        return TryPyRecvBeginAfterSessionReady();
     };
 
     void PyRecvEnd()
@@ -718,7 +706,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void PySendBegin()
     {
-        TryTransitionSessionToRunning();
+        BeginDataExchangeOrThrow("PySendBegin");
         TransitionPeer(Ns3AiMsgPeer::Py,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Sending,
@@ -732,7 +720,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryPySendBegin()
     {
-        TryTransitionSessionToRunning();
+        if (!TryBeginDataExchange())
+        {
+            return false;
+        }
         if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Sending))
@@ -770,6 +761,30 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
   private:
+    bool TryPyRecvBeginAfterSessionReady()
+    {
+        m_pyRecvHasCpp2PySlot = false;
+        if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
+                               Ns3AiMsgPeerState::Ready,
+                               Ns3AiMsgPeerState::Receiving))
+        {
+            return false;
+        }
+        if (!WaitForCpp2PyDataOrFinish())
+        {
+            MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
+            return false;
+        }
+        if (m_handleFinish)
+        {
+            m_isFinished = m_sync->m_isFinished;
+        }
+        if (m_isFinished && !m_pyRecvHasCpp2PySlot)
+        {
+            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
+        }
+        return true;
+    };
     static uint8_t AtomicRead8(const volatile uint8_t* mem)
     {
         return __atomic_load_n(const_cast<const uint8_t*>(mem), __ATOMIC_ACQUIRE);
@@ -916,15 +931,36 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
     };
 
-    void TryTransitionSessionToRunning() const
+    bool TryBeginDataExchange() const
     {
+        const auto actual = GetSessionState();
+        if (actual == Ns3AiMsgSessionState::Running)
+        {
+            return true;
+        }
+        if (actual != Ns3AiMsgSessionState::Ready)
+        {
+            return false;
+        }
+
+        // Running 是粘性状态：任意一次有效数据交换开始后，会话保持 RUNNING，
+        // 直到显式关闭握手或结构化错误改变生命周期状态。
         uint8_t expected = static_cast<uint8_t>(Ns3AiMsgSessionState::Ready);
-        __atomic_compare_exchange_n(const_cast<uint8_t*>(&m_sync->m_sessionState),
-                                    &expected,
-                                    static_cast<uint8_t>(Ns3AiMsgSessionState::Running),
-                                    false,
-                                    __ATOMIC_ACQ_REL,
-                                    __ATOMIC_ACQUIRE);
+        return __atomic_compare_exchange_n(const_cast<uint8_t*>(&m_sync->m_sessionState),
+                                           &expected,
+                                           static_cast<uint8_t>(Ns3AiMsgSessionState::Running),
+                                           false,
+                                           __ATOMIC_ACQ_REL,
+                                           __ATOMIC_ACQUIRE) ||
+               expected == static_cast<uint8_t>(Ns3AiMsgSessionState::Running);
+    };
+
+    void BeginDataExchangeOrThrow(const char* operation) const
+    {
+        if (!TryBeginDataExchange())
+        {
+            EnsureSessionStateReadyOrRunning(operation);
+        }
     };
 
     void EnsureSessionStateReadyOrRunning(const char* operation) const
