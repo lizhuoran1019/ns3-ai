@@ -45,6 +45,19 @@ enum class Ns3AiMsgPeer : uint8_t
     Py = 2
 };
 
+inline std::ostream&
+operator<<(std::ostream& os, Ns3AiMsgPeer peer)
+{
+    switch (peer)
+    {
+    case Ns3AiMsgPeer::Cpp:
+        return os << "cpp";
+    case Ns3AiMsgPeer::Py:
+        return os << "python";
+    }
+    return os << "unknown";
+}
+
 enum class Ns3AiMsgPeerState : uint8_t
 {
     Initializing = 0,
@@ -55,6 +68,93 @@ enum class Ns3AiMsgPeerState : uint8_t
     Error = 5
 };
 
+enum class Ns3AiMsgSessionState : uint8_t
+{
+    Init = 0,
+    Ready = 1,
+    Running = 2,
+    Closing = 3,
+    Closed = 4,
+    Error = 5
+};
+
+enum class Ns3AiMsgCloseReason : uint8_t
+{
+    None = 0,
+    Normal = 1,
+    UserInterrupted = 2
+};
+
+enum class Ns3AiMsgErrorReason : uint8_t
+{
+    None = 0,
+    Timeout = 1,
+    PeerDeath = 2,
+    ProtocolMismatch = 3,
+    StaleGeneration = 4,
+    UserInterrupted = 5,
+    InvalidState = 6
+};
+
+inline std::ostream&
+operator<<(std::ostream& os, Ns3AiMsgSessionState state)
+{
+    switch (state)
+    {
+    case Ns3AiMsgSessionState::Init:
+        return os << "init";
+    case Ns3AiMsgSessionState::Ready:
+        return os << "ready";
+    case Ns3AiMsgSessionState::Running:
+        return os << "running";
+    case Ns3AiMsgSessionState::Closing:
+        return os << "closing";
+    case Ns3AiMsgSessionState::Closed:
+        return os << "closed";
+    case Ns3AiMsgSessionState::Error:
+        return os << "error";
+    }
+    return os << "unknown";
+}
+
+inline std::ostream&
+operator<<(std::ostream& os, Ns3AiMsgCloseReason reason)
+{
+    switch (reason)
+    {
+    case Ns3AiMsgCloseReason::None:
+        return os << "none";
+    case Ns3AiMsgCloseReason::Normal:
+        return os << "normal";
+    case Ns3AiMsgCloseReason::UserInterrupted:
+        return os << "user_interrupted";
+    }
+    return os << "unknown";
+}
+
+inline std::ostream&
+operator<<(std::ostream& os, Ns3AiMsgErrorReason reason)
+{
+    switch (reason)
+    {
+    case Ns3AiMsgErrorReason::None:
+        return os << "none";
+    case Ns3AiMsgErrorReason::Timeout:
+        return os << "timeout";
+    case Ns3AiMsgErrorReason::PeerDeath:
+        return os << "peer_death";
+    case Ns3AiMsgErrorReason::ProtocolMismatch:
+        return os << "protocol_mismatch";
+    case Ns3AiMsgErrorReason::StaleGeneration:
+        return os << "stale_generation";
+    case Ns3AiMsgErrorReason::UserInterrupted:
+        return os << "user_interrupted";
+    case Ns3AiMsgErrorReason::InvalidState:
+        return os << "invalid_state";
+    }
+    return os << "unknown";
+}
+
 struct Ns3AiMsgSync
 {
     volatile uint8_t m_cpp2pyEmptyCount{1};
@@ -62,6 +162,11 @@ struct Ns3AiMsgSync
     volatile uint8_t m_py2cppEmptyCount{1};
     volatile uint8_t m_py2cppFullCount{0};
     volatile bool m_isFinished{false};
+    volatile uint8_t m_sessionState{static_cast<uint8_t>(Ns3AiMsgSessionState::Init)};
+    volatile uint8_t m_closeReason{static_cast<uint8_t>(Ns3AiMsgCloseReason::None)};
+    volatile uint8_t m_closeRequester{0};
+    volatile uint8_t m_closeAcknowledger{0};
+    volatile uint8_t m_errorReason{static_cast<uint8_t>(Ns3AiMsgErrorReason::None)};
     volatile uint8_t m_cppState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
     volatile uint8_t m_pyState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
     volatile uint8_t m_lastErrorPeer{0};
@@ -73,6 +178,8 @@ struct Ns3AiMsgProtocolHeader
     volatile uint32_t m_magic{NS3_AI_MSG_HEADER_MAGIC};
     volatile uint16_t m_abiVersion{NS3_AI_MSG_ABI_VERSION};
     volatile uint16_t m_headerSize{sizeof(Ns3AiMsgProtocolHeader)};
+    volatile uint64_t m_sessionId{0};
+    volatile uint64_t m_generationId{0};
     volatile uint32_t m_cpp2pyPayloadSize{0};
     volatile uint32_t m_py2cppPayloadSize{0};
     volatile uint32_t m_cpp2pySchemaVersion{0};
@@ -258,6 +365,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
           m_useVector(use_vector),
           m_handleFinish(handle_finish),
           m_segName(segment_name),
+          m_cpp2pyMsgName(cpp2py_msg_name),
+          m_py2cppMsgName(py2cpp_msg_name),
+          m_lockableName(lockable_name),
           m_headerName(header_name),
           m_syncTimeoutUs(sync_timeout_us),
           m_cpp2pySchemaHash(cpp2py_schema_hash != 0 ? cpp2py_schema_hash :
@@ -382,8 +492,88 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         return GetPeerState(Ns3AiMsgPeer::Py);
     };
 
+    Ns3AiMsgSessionState GetSessionState() const
+    {
+        return static_cast<Ns3AiMsgSessionState>(AtomicRead8(&m_sync->m_sessionState));
+    };
+
+    uint64_t GetSessionId() const
+    {
+        return AtomicRead64(&m_header->m_sessionId);
+    };
+
+    uint64_t GetGenerationId() const
+    {
+        return AtomicRead64(&m_header->m_generationId);
+    };
+
+    Ns3AiMsgCloseReason GetCloseReason() const
+    {
+        return static_cast<Ns3AiMsgCloseReason>(AtomicRead8(&m_sync->m_closeReason));
+    };
+
+    Ns3AiMsgErrorReason GetErrorReason() const
+    {
+        return static_cast<Ns3AiMsgErrorReason>(AtomicRead8(&m_sync->m_errorReason));
+    };
+
+    Ns3AiMsgPeer GetLastErrorPeer() const
+    {
+        return static_cast<Ns3AiMsgPeer>(AtomicRead8(&m_sync->m_lastErrorPeer));
+    };
+
+    void RequestClose(Ns3AiMsgPeer peer, Ns3AiMsgCloseReason reason) const
+    {
+        if (GetSessionState() == Ns3AiMsgSessionState::Closed)
+        {
+            if (GetCloseReason() == reason)
+            {
+                return;
+            }
+        }
+        EnsureSessionStateReadyOrRunning("RequestClose");
+        AtomicStore8(&m_sync->m_closeReason, static_cast<uint8_t>(reason));
+        AtomicStore8(&m_sync->m_closeRequester, static_cast<uint8_t>(peer));
+        AtomicStore8(&m_sync->m_closeAcknowledger, 0);
+        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Closing));
+        __sync_synchronize();
+    };
+
+    void AcknowledgeClose(Ns3AiMsgPeer peer) const
+    {
+        if (GetSessionState() == Ns3AiMsgSessionState::Closed)
+        {
+            return;
+        }
+        EnsureSessionState(Ns3AiMsgSessionState::Closing, "AcknowledgeClose");
+        if (AtomicRead8(&m_sync->m_closeRequester) == static_cast<uint8_t>(peer))
+        {
+            throw std::runtime_error(
+                "ns3-ai message interface close acknowledgement must come from the peer that did not request close");
+        }
+        AtomicStore8(&m_sync->m_closeAcknowledger, static_cast<uint8_t>(peer));
+        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Closed));
+        __sync_synchronize();
+    };
+
+    void ReportPeerDeath(Ns3AiMsgPeer peer) const
+    {
+        MarkPeerError(peer, Ns3AiMsgErrorReason::PeerDeath);
+    };
+
+    bool CheckGenerationId(uint64_t generationId, Ns3AiMsgPeer peer) const
+    {
+        if (generationId == GetGenerationId())
+        {
+            return true;
+        }
+        MarkPeerError(peer, Ns3AiMsgErrorReason::StaleGeneration);
+        return false;
+    };
+
     void CppSendBegin()
     {
+        BeginDataExchangeOrThrow("CppSendBegin");
         TransitionPeer(Ns3AiMsgPeer::Cpp,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Sending,
@@ -397,6 +587,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryCppSendBegin()
     {
+        if (!TryBeginDataExchange())
+        {
+            return false;
+        }
         if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Sending))
@@ -405,7 +599,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         if (!WaitForSync(&m_sync->m_cpp2pyEmptyCount, true))
         {
-            MarkPeerError(Ns3AiMsgPeer::Cpp, 1);
+            MarkPeerError(Ns3AiMsgPeer::Cpp, Ns3AiMsgErrorReason::Timeout);
             return false;
         }
         return true;
@@ -420,6 +614,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void CppRecvBegin()
     {
+        BeginDataExchangeOrThrow("CppRecvBegin");
         TransitionPeer(Ns3AiMsgPeer::Cpp,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Receiving,
@@ -433,6 +628,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryCppRecvBegin()
     {
+        if (!TryBeginDataExchange())
+        {
+            return false;
+        }
         if (!TryTransitionPeer(Ns3AiMsgPeer::Cpp,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Receiving))
@@ -441,7 +640,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         if (!WaitForSync(&m_sync->m_py2cppFullCount, true))
         {
-            MarkPeerError(Ns3AiMsgPeer::Cpp, 2);
+            MarkPeerError(Ns3AiMsgPeer::Cpp, Ns3AiMsgErrorReason::Timeout);
             return false;
         }
         return true;
@@ -478,7 +677,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void PyRecvBegin()
     {
-        if (!TryPyRecvBegin())
+        BeginDataExchangeOrThrow("PyRecvBegin");
+        if (!TryPyRecvBeginAfterSessionReady())
         {
             ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag", Ns3AiMsgPeer::Py);
         }
@@ -486,27 +686,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryPyRecvBegin()
     {
-        m_pyRecvHasCpp2PySlot = false;
-        if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
-                               Ns3AiMsgPeerState::Ready,
-                               Ns3AiMsgPeerState::Receiving))
+        if (!TryBeginDataExchange())
         {
             return false;
         }
-        if (!WaitForCpp2PyDataOrFinish())
-        {
-            MarkPeerError(Ns3AiMsgPeer::Py, 3);
-            return false;
-        }
-        if (m_handleFinish)
-        {
-            m_isFinished = m_sync->m_isFinished;
-        }
-        if (m_isFinished && !m_pyRecvHasCpp2PySlot)
-        {
-            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
-        }
-        return true;
+        return TryPyRecvBeginAfterSessionReady();
     };
 
     void PyRecvEnd()
@@ -522,6 +706,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void PySendBegin()
     {
+        BeginDataExchangeOrThrow("PySendBegin");
         TransitionPeer(Ns3AiMsgPeer::Py,
                        Ns3AiMsgPeerState::Ready,
                        Ns3AiMsgPeerState::Sending,
@@ -535,6 +720,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool TryPySendBegin()
     {
+        if (!TryBeginDataExchange())
+        {
+            return false;
+        }
         if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
                                Ns3AiMsgPeerState::Ready,
                                Ns3AiMsgPeerState::Sending))
@@ -547,7 +736,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             {
                 m_isFinished = m_sync->m_isFinished;
             }
-            MarkPeerError(Ns3AiMsgPeer::Py, 4);
+            MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
             return false;
         }
         return true;
@@ -572,6 +761,30 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
   private:
+    bool TryPyRecvBeginAfterSessionReady()
+    {
+        m_pyRecvHasCpp2PySlot = false;
+        if (!TryTransitionPeer(Ns3AiMsgPeer::Py,
+                               Ns3AiMsgPeerState::Ready,
+                               Ns3AiMsgPeerState::Receiving))
+        {
+            return false;
+        }
+        if (!WaitForCpp2PyDataOrFinish())
+        {
+            MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
+            return false;
+        }
+        if (m_handleFinish)
+        {
+            m_isFinished = m_sync->m_isFinished;
+        }
+        if (m_isFinished && !m_pyRecvHasCpp2PySlot)
+        {
+            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
+        }
+        return true;
+    };
     static uint8_t AtomicRead8(const volatile uint8_t* mem)
     {
         return __atomic_load_n(const_cast<const uint8_t*>(mem), __ATOMIC_ACQUIRE);
@@ -580,6 +793,42 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     static void AtomicStore8(volatile uint8_t* mem, uint8_t value)
     {
         __atomic_store_n(const_cast<uint8_t*>(mem), value, __ATOMIC_RELEASE);
+    };
+
+    static uint64_t AtomicRead64(const volatile uint64_t* mem)
+    {
+        return __atomic_load_n(const_cast<const uint64_t*>(mem), __ATOMIC_ACQUIRE);
+    };
+
+    static void AtomicStore64(volatile uint64_t* mem, uint64_t value)
+    {
+        __atomic_store_n(const_cast<uint64_t*>(mem), value, __ATOMIC_RELEASE);
+    };
+
+    static uint64_t HashNamePart(uint64_t hash, const std::string& value)
+    {
+        return Ns3AiMsgHashString(hash, value);
+    };
+
+    static uint64_t MakeSessionId(const std::string& segmentName,
+                                  const std::string& cpp2pyMsgName,
+                                  const std::string& py2cppMsgName,
+                                  const std::string& lockableName,
+                                  const std::string& headerName)
+    {
+        uint64_t hash = 1469598103934665603ULL;
+        hash = HashNamePart(hash, segmentName);
+        hash = HashNamePart(hash, cpp2pyMsgName);
+        hash = HashNamePart(hash, py2cppMsgName);
+        hash = HashNamePart(hash, lockableName);
+        hash = HashNamePart(hash, headerName);
+        return hash | 1ULL;
+    };
+
+    static uint64_t MakeGenerationId()
+    {
+        return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) |
+               1ULL;
     };
 
     static const char* PeerName(Ns3AiMsgPeer peer)
@@ -624,6 +873,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void InitializeSyncState() const
     {
+        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Init));
+        AtomicStore8(&m_sync->m_closeReason, static_cast<uint8_t>(Ns3AiMsgCloseReason::None));
+        AtomicStore8(&m_sync->m_closeRequester, 0);
+        AtomicStore8(&m_sync->m_closeAcknowledger, 0);
+        AtomicStore8(&m_sync->m_errorReason, static_cast<uint8_t>(Ns3AiMsgErrorReason::None));
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
         SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
         AtomicStore8(&m_sync->m_lastErrorPeer, 0);
@@ -665,11 +919,69 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
     };
 
-    void MarkPeerError(Ns3AiMsgPeer peer, uint8_t code) const
+    void EnsureSessionState(Ns3AiMsgSessionState expected, const char* operation) const
+    {
+        const auto actual = GetSessionState();
+        if (actual != expected)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface invalid session state in " << operation << ": expected "
+                << expected << ", got " << actual << ".";
+            throw std::runtime_error(oss.str());
+        }
+    };
+
+    bool TryBeginDataExchange() const
+    {
+        const auto actual = GetSessionState();
+        if (actual == Ns3AiMsgSessionState::Running)
+        {
+            return true;
+        }
+        if (actual != Ns3AiMsgSessionState::Ready)
+        {
+            return false;
+        }
+
+        // Running 是粘性状态：任意一次有效数据交换开始后，会话保持 RUNNING，
+        // 直到显式关闭握手或结构化错误改变生命周期状态。
+        uint8_t expected = static_cast<uint8_t>(Ns3AiMsgSessionState::Ready);
+        return __atomic_compare_exchange_n(const_cast<uint8_t*>(&m_sync->m_sessionState),
+                                           &expected,
+                                           static_cast<uint8_t>(Ns3AiMsgSessionState::Running),
+                                           false,
+                                           __ATOMIC_ACQ_REL,
+                                           __ATOMIC_ACQUIRE) ||
+               expected == static_cast<uint8_t>(Ns3AiMsgSessionState::Running);
+    };
+
+    void BeginDataExchangeOrThrow(const char* operation) const
+    {
+        if (!TryBeginDataExchange())
+        {
+            EnsureSessionStateReadyOrRunning(operation);
+        }
+    };
+
+    void EnsureSessionStateReadyOrRunning(const char* operation) const
+    {
+        const auto actual = GetSessionState();
+        if (actual != Ns3AiMsgSessionState::Ready && actual != Ns3AiMsgSessionState::Running)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface invalid session state in " << operation
+                << ": expected ready or running, got " << actual << ".";
+            throw std::runtime_error(oss.str());
+        }
+    };
+
+    void MarkPeerError(Ns3AiMsgPeer peer, Ns3AiMsgErrorReason reason) const
     {
         SetPeerState(peer, Ns3AiMsgPeerState::Error);
         AtomicStore8(&m_sync->m_lastErrorPeer, static_cast<uint8_t>(peer));
-        AtomicStore8(&m_sync->m_lastErrorCode, code);
+        AtomicStore8(&m_sync->m_lastErrorCode, static_cast<uint8_t>(reason));
+        AtomicStore8(&m_sync->m_errorReason, static_cast<uint8_t>(reason));
+        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Error));
         __sync_synchronize();
     };
 
@@ -728,6 +1040,13 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         m_header->m_magic = NS3_AI_MSG_HEADER_MAGIC;
         m_header->m_abiVersion = NS3_AI_MSG_ABI_VERSION;
         m_header->m_headerSize = sizeof(Ns3AiMsgProtocolHeader);
+        AtomicStore64(&m_header->m_sessionId,
+                      MakeSessionId(m_segName,
+                                    m_cpp2pyMsgName,
+                                    m_py2cppMsgName,
+                                    m_lockableName,
+                                    m_headerName));
+        AtomicStore64(&m_header->m_generationId, MakeGenerationId());
         m_header->m_cpp2pyPayloadSize = sizeof(Cpp2PyMsgType);
         m_header->m_py2cppPayloadSize = sizeof(Py2CppMsgType);
         m_header->m_cpp2pySchemaHash = m_cpp2pySchemaHash;
@@ -772,10 +1091,13 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             ThrowProtocolHeaderFailure("py2cpp schema version mismatch");
         }
+        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Ready));
+        __sync_synchronize();
     };
 
     [[noreturn]] void ThrowProtocolHeaderFailure(const char* reason) const
     {
+        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
         std::ostringstream oss;
         oss << "ns3-ai message interface protocol header validation failed for '" << m_headerName
             << "': " << reason << ". Check that both peers use the same message schema and ABI.";
@@ -790,7 +1112,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     {
         if (!WaitForSync(counter, abortOnFinished))
         {
-            MarkPeerError(peer, 5);
+            MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
             ThrowSyncFailure(operation, waitTarget, peer);
         }
     };
@@ -848,6 +1170,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     const bool m_useVector;
     const bool m_handleFinish;
     const std::string m_segName;
+    const std::string m_cpp2pyMsgName;
+    const std::string m_py2cppMsgName;
+    const std::string m_lockableName;
     const std::string m_headerName;
     const uint64_t m_syncTimeoutUs;
     const uint64_t m_cpp2pySchemaHash;
