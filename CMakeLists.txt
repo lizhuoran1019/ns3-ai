@@ -163,7 +163,7 @@ build_lib(
         SOURCE_FILES ${msg_interface_srcs} ${gym_interface_srcs}
         HEADER_FILES ${msg_interface_hdrs} ${gym_interface_hdrs}
         LIBRARIES_TO_LINK ${libcore} protobuf::libprotobuf
-        TEST_SOURCES test/ns3-ai-error-test-suite.cc test/msg-interface-session-lifecycle-test-suite.cc test/ns3-ai-semaphore-test-suite.cc
+        TEST_SOURCES test/ns3-ai-error-test-suite.cc test/msg-interface-session-lifecycle-test-suite.cc test/ns3-ai-semaphore-test-suite.cc test/ns3-ai-schema-validation-test-suite.cc
 )
 add_dependencies(${libai} proto-objects)
 

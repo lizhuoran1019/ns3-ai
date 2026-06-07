@@ -341,6 +341,31 @@ MakeNs3AiMsgSchema(std::string name,
     return schema;
 }
 
+/**
+ * \brief Schema 校验模式。
+ */
+enum class Ns3AiSchemaValidationMode : uint8_t
+{
+    Strict = 0,
+    Compatibility = 1,
+    Disabled = 2
+};
+
+inline std::ostream&
+operator<<(std::ostream& os, Ns3AiSchemaValidationMode mode)
+{
+    switch (mode)
+    {
+    case Ns3AiSchemaValidationMode::Strict:
+        return os << "strict";
+    case Ns3AiSchemaValidationMode::Compatibility:
+        return os << "compatibility";
+    case Ns3AiSchemaValidationMode::Disabled:
+        return os << "disabled";
+    }
+    return os << "unknown";
+}
+
 struct Ns3AiMsgInterfaceNames
 {
     std::string m_segmentName;
@@ -368,6 +393,7 @@ struct Ns3AiMsgInterfaceConfig
     uint32_t m_py2cppSchemaVersion{0};
     uint32_t m_cpp2pySchemaSize{0};
     uint32_t m_py2cppSchemaSize{0};
+    Ns3AiSchemaValidationMode m_schemaValidationMode{Ns3AiSchemaValidationMode::Strict};
 
     Ns3AiMsgInterfaceConfig& SetSchemas(const Ns3AiMsgSchema& cpp2pySchema,
                                         const Ns3AiMsgSchema& py2cppSchema)
@@ -409,7 +435,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                                    uint64_t cpp2py_schema_hash = 0,
                                    uint64_t py2cpp_schema_hash = 0,
                                    uint32_t cpp2py_schema_version = 0,
-                                   uint32_t py2cpp_schema_version = 0)
+                                   uint32_t py2cpp_schema_version = 0,
+                                   Ns3AiSchemaValidationMode schema_validation_mode =
+                                       Ns3AiSchemaValidationMode::Strict)
         : m_cpp2pyStruct(nullptr),
           m_py2CppStruct(nullptr),
           m_cpp2pyVector(nullptr),
@@ -433,9 +461,26 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                                                            Ns3AiMsgTypeSchemaDefaults<Cpp2PyMsgType>::SchemaVersion),
           m_py2cppSchemaVersion(py2cpp_schema_version != 0 ? py2cpp_schema_version :
                                                            Ns3AiMsgTypeSchemaDefaults<Py2CppMsgType>::SchemaVersion),
+          m_schemaValidationMode(schema_validation_mode),
           m_isFinished(false),
           m_pyRecvHasCpp2PySlot(false)
     {
+        // 预检：Strict 模式下 expected metadata 不得为 0
+        if (m_schemaValidationMode == Ns3AiSchemaValidationMode::Strict)
+        {
+            RequireNonZeroExpectedMetadata("cpp2py", m_cpp2pySchemaHash, m_cpp2pySchemaVersion);
+            RequireNonZeroExpectedMetadata("py2cpp", m_py2cppSchemaHash, m_py2cppSchemaVersion);
+        }
+        else if (m_schemaValidationMode == Ns3AiSchemaValidationMode::Compatibility)
+        {
+            WarnIfZeroExpectedMetadata("cpp2py", m_cpp2pySchemaHash, m_cpp2pySchemaVersion);
+            WarnIfZeroExpectedMetadata("py2cpp", m_py2cppSchemaHash, m_py2cppSchemaVersion);
+        }
+        else
+        {
+            WarnSchemaValidationDisabled();
+        }
+
         using namespace boost::interprocess;
         if (m_isCreator)
         {
@@ -1146,6 +1191,74 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
     /**
+     * 校验 expected schema metadata：Strict 模式下不可为 0。
+     */
+    void RequireNonZeroExpectedMetadata(const char* direction,
+                                         uint64_t schemaHash,
+                                         uint32_t schemaVersion) const
+    {
+        if (schemaHash == 0)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface schema validation failed:\n"
+                << "direction=" << direction << "\n"
+                << "field=schema_hash\n"
+                << "expected=(non-zero)\n"
+                << "actual=0x0\n"
+                << "mode=strict\n"
+                << "header=" << m_headerName << "\n"
+                << "segment=" << m_segName << ".";
+            throw Ns3AiSchemaError(oss.str());
+        }
+        if (schemaVersion == 0)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface schema validation failed:\n"
+                << "direction=" << direction << "\n"
+                << "field=schema_version\n"
+                << "expected=(non-zero)\n"
+                << "actual=0\n"
+                << "mode=strict\n"
+                << "header=" << m_headerName << "\n"
+                << "segment=" << m_segName << ".";
+            throw Ns3AiSchemaError(oss.str());
+        }
+    };
+
+    /**
+     * Compatibility 模式下 expected metadata 为 0 时输出 deprecation warning。
+     */
+    void WarnIfZeroExpectedMetadata(const char* direction,
+                                     uint64_t schemaHash,
+                                     uint32_t schemaVersion) const
+    {
+        if (schemaHash == 0)
+        {
+            std::cerr << "ns3-ai [" << m_headerName << "] " << direction
+                      << " schema_hash is 0 (deprecated: missing schema metadata). "
+                      << "Set schema_validation_mode='strict' after regenerating bindings."
+                      << std::endl;
+        }
+        if (schemaVersion == 0)
+        {
+            std::cerr << "ns3-ai [" << m_headerName << "] " << direction
+                      << " schema_version is 0 (deprecated: missing schema metadata). "
+                      << "Set schema_validation_mode='strict' after regenerating bindings."
+                      << std::endl;
+        }
+    };
+
+    /**
+     * Disabled 模式输出 schema 校验已禁用的 visible warning。
+     */
+    void WarnSchemaValidationDisabled() const
+    {
+        std::cerr << "ns3-ai [" << m_headerName << "] "
+                  << "schema validation is disabled. Layout drift may corrupt shared memory."
+                  << std::endl;
+    };
+
+    /**
      * 等待 creator 完成 InitializeProtocolHeader 的发布门闩。
      *
      * m_magic 默认 0，creator 在所有 header 字段写入完成后最后一步
@@ -1203,29 +1316,101 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             ThrowProtocolHeaderFailure("payload size mismatch");
         }
-        if (m_cpp2pySchemaHash != 0 &&
-            m_header->m_cpp2pySchemaHash.load(std::memory_order_acquire) != m_cpp2pySchemaHash)
-        {
-            ThrowSchemaHeaderFailure("cpp2py schema hash mismatch");
-        }
-        if (m_py2cppSchemaHash != 0 &&
-            m_header->m_py2cppSchemaHash.load(std::memory_order_acquire) != m_py2cppSchemaHash)
-        {
-            ThrowSchemaHeaderFailure("py2cpp schema hash mismatch");
-        }
-        if (m_cpp2pySchemaVersion != 0 &&
-            m_header->m_cpp2pySchemaVersion.load(std::memory_order_acquire) != m_cpp2pySchemaVersion)
-        {
-            ThrowSchemaHeaderFailure("cpp2py schema version mismatch");
-        }
-        if (m_py2cppSchemaVersion != 0 &&
-            m_header->m_py2cppSchemaVersion.load(std::memory_order_acquire) != m_py2cppSchemaVersion)
-        {
-            ThrowSchemaHeaderFailure("py2cpp schema version mismatch");
-        }
+
+        ValidateSchemaField("cpp2py", "schema_hash",
+                            m_cpp2pySchemaHash,
+                            m_header->m_cpp2pySchemaHash);
+        ValidateSchemaField("py2cpp", "schema_hash",
+                            m_py2cppSchemaHash,
+                            m_header->m_py2cppSchemaHash);
+        ValidateSchemaField("cpp2py", "schema_version",
+                            m_cpp2pySchemaVersion,
+                            m_header->m_cpp2pySchemaVersion);
+        ValidateSchemaField("py2cpp", "schema_version",
+                            m_py2cppSchemaVersion,
+                            m_header->m_py2cppSchemaVersion);
+
         // 门闩：m_sessionState = Ready 的 release store 确保 creator 看到 opener 已校验通过
         m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Ready),
                                      std::memory_order_release);
+    };
+
+    /**
+     * 根据 m_schemaValidationMode 执行单一 schema 字段的校验。
+     */
+    void ValidateSchemaField(const char* direction,
+                              const char* field,
+                              uint64_t expected,
+                              const std::atomic<uint64_t>& actualAtomic) const
+    {
+        const uint64_t actual = actualAtomic.load(std::memory_order_acquire);
+        switch (m_schemaValidationMode)
+        {
+        case Ns3AiSchemaValidationMode::Strict:
+            if (expected == 0)
+            {
+                RequireNonZeroExpectedMetadata(direction,
+                                               (field == std::string("schema_version") ? 1ULL : 0ULL),
+                                               0);
+            }
+            if (expected != actual)
+            {
+                ThrowSchemaHeaderFailure(direction, field, expected, actual);
+            }
+            break;
+        case Ns3AiSchemaValidationMode::Compatibility:
+            if (expected == 0)
+            {
+                WarnIfZeroExpectedMetadata(direction,
+                                           (field == std::string("schema_version") ? 1ULL : 0ULL),
+                                           (field == std::string("schema_version") ? 0U : 1U));
+            }
+            else if (expected != actual)
+            {
+                ThrowSchemaHeaderFailure(direction, field, expected, actual);
+            }
+            break;
+        case Ns3AiSchemaValidationMode::Disabled:
+            break;
+        }
+    };
+
+    /** uint32_t 重载 */
+    void ValidateSchemaField(const char* direction,
+                              const char* field,
+                              uint32_t expected,
+                              const std::atomic<uint32_t>& actualAtomic) const
+    {
+        const uint32_t actual = actualAtomic.load(std::memory_order_acquire);
+        switch (m_schemaValidationMode)
+        {
+        case Ns3AiSchemaValidationMode::Strict:
+            if (expected == 0)
+            {
+                RequireNonZeroExpectedMetadata(direction,
+                                               0,
+                                               (field == std::string("schema_version") ? 0U : 1U));
+            }
+            if (expected != actual)
+            {
+                ThrowSchemaHeaderFailure(direction, field, expected, actual);
+            }
+            break;
+        case Ns3AiSchemaValidationMode::Compatibility:
+            if (expected == 0)
+            {
+                WarnIfZeroExpectedMetadata(direction,
+                                           (field == std::string("schema_version") ? 1ULL : 0ULL),
+                                           (field == std::string("schema_version") ? 0U : 1U));
+            }
+            else if (expected != actual)
+            {
+                ThrowSchemaHeaderFailure(direction, field, expected, actual);
+            }
+            break;
+        case Ns3AiSchemaValidationMode::Disabled:
+            break;
+        }
     };
 
     [[noreturn]] void ThrowProtocolHeaderFailure(const char* reason) const
@@ -1237,13 +1422,33 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         throw Ns3AiProtocolError(oss.str());
     };
 
-    [[noreturn]] void ThrowSchemaHeaderFailure(const char* reason) const
+    [[noreturn]] void ThrowSchemaHeaderFailure(const char* direction,
+                                                const char* field,
+                                                uint64_t expected,
+                                                uint64_t actual) const
     {
         MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
         std::ostringstream oss;
-        oss << "ns3-ai message interface protocol header schema validation failed for '"
-            << m_headerName << "': " << reason << ".";
+        oss << "ns3-ai message interface schema validation failed:\n"
+            << "direction=" << direction << "\n"
+            << "field=" << field << "\n"
+            << "expected=0x" << std::hex << expected << std::dec << "\n"
+            << "actual=0x" << std::hex << actual << std::dec << "\n"
+            << "mode=" << m_schemaValidationMode << "\n"
+            << "header=" << m_headerName << "\n"
+            << "segment=" << m_segName << ".";
         throw Ns3AiSchemaError(oss.str());
+    };
+
+    /** ThrowSchemaHeaderFailure uint32_t 重载 */
+    [[noreturn]] void ThrowSchemaHeaderFailure(const char* direction,
+                                                const char* field,
+                                                uint32_t expected,
+                                                uint32_t actual) const
+    {
+        ThrowSchemaHeaderFailure(direction, field,
+                                 static_cast<uint64_t>(expected),
+                                 static_cast<uint64_t>(actual));
     };
 
     /**
@@ -1350,6 +1555,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     const uint64_t m_py2cppSchemaHash;
     const uint32_t m_cpp2pySchemaVersion;
     const uint32_t m_py2cppSchemaVersion;
+    const Ns3AiSchemaValidationMode m_schemaValidationMode;
     bool m_isFinished;
     bool m_pyRecvHasCpp2PySlot;
 };
@@ -1513,7 +1719,8 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
             config.m_cpp2pySchemaHash,
             config.m_py2cppSchemaHash,
             config.m_cpp2pySchemaVersion,
-            config.m_py2cppSchemaVersion);
+            config.m_py2cppSchemaVersion,
+            config.m_schemaValidationMode);
         auto rawInterface = interface.get();
         m_interfaces.emplace(key, std::move(interface));
         return rawInterface;
@@ -1545,7 +1752,8 @@ class Ns3AiMsgInterface : public Singleton<Ns3AiMsgInterface>
             << config.m_isMemoryCreator << '|' << config.m_useVector << '|' << config.m_handleFinish
             << '|' << config.m_size << '|' << config.m_syncTimeoutUs << '|'
             << config.m_cpp2pySchemaHash << '|' << config.m_py2cppSchemaHash << '|'
-            << config.m_cpp2pySchemaVersion << '|' << config.m_py2cppSchemaVersion;
+            << config.m_cpp2pySchemaVersion << '|' << config.m_py2cppSchemaVersion << '|'
+            << static_cast<uint8_t>(config.m_schemaValidationMode);
         return oss.str();
     };
 
