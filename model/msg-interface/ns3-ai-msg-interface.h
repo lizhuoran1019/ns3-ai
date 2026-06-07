@@ -58,6 +58,10 @@ static_assert(std::atomic<uint64_t>::is_always_lock_free,
 
 static_assert(alignof(std::atomic<uint8_t>) == alignof(uint8_t),
               "std::atomic<uint8_t> 的对齐必须等于 uint8_t");
+static_assert(alignof(std::atomic<uint16_t>) == alignof(uint16_t),
+              "std::atomic<uint16_t> 的对齐必须等于 uint16_t");
+static_assert(alignof(std::atomic<uint32_t>) == alignof(uint32_t),
+              "std::atomic<uint32_t> 的对齐必须等于 uint32_t");
 static_assert(alignof(std::atomic<uint64_t>) == alignof(uint64_t),
               "std::atomic<uint64_t> 的对齐必须等于 uint64_t");
 
@@ -207,22 +211,27 @@ static_assert(sizeof(Ns3AiMsgSync) == 14,
 /**
  * \brief 共享内存协议头。
  *
- * 初始化后不可变字段为普通类型；跨进程读取的 sessionId/generationId 使用 std::atomic。
+ * 所有跨进程读写的字段使用 std::atomic 确保发布性，
+ * 无需额外配对 __sync_synchronize() 全屏障。
  */
 struct Ns3AiMsgProtocolHeader
 {
-    uint32_t m_magic{NS3_AI_MSG_HEADER_MAGIC};
-    uint16_t m_abiVersion{NS3_AI_MSG_ABI_VERSION};
-    uint16_t m_headerSize{sizeof(Ns3AiMsgProtocolHeader)};
+    std::atomic<uint32_t> m_magic{NS3_AI_MSG_HEADER_MAGIC};
+    std::atomic<uint16_t> m_abiVersion{NS3_AI_MSG_ABI_VERSION};
+    std::atomic<uint16_t> m_headerSize{sizeof(Ns3AiMsgProtocolHeader)};
     std::atomic<uint64_t> m_sessionId{0};
     std::atomic<uint64_t> m_generationId{0};
-    uint32_t m_cpp2pyPayloadSize{0};
-    uint32_t m_py2cppPayloadSize{0};
-    uint32_t m_cpp2pySchemaVersion{0};
-    uint32_t m_py2cppSchemaVersion{0};
-    uint64_t m_cpp2pySchemaHash{0};
-    uint64_t m_py2cppSchemaHash{0};
+    std::atomic<uint32_t> m_cpp2pyPayloadSize{0};
+    std::atomic<uint32_t> m_py2cppPayloadSize{0};
+    std::atomic<uint32_t> m_cpp2pySchemaVersion{0};
+    std::atomic<uint32_t> m_py2cppSchemaVersion{0};
+    std::atomic<uint64_t> m_cpp2pySchemaHash{0};
+    std::atomic<uint64_t> m_py2cppSchemaHash{0};
 };
+
+/* ---- ABI 静态断言：Ns3AiMsgProtocolHeader 布局锁定 ---- */
+static_assert(sizeof(Ns3AiMsgProtocolHeader) == 56,
+              "Ns3AiMsgProtocolHeader sizeof 不可改变，否则破坏共享内存布局");
 
 enum class Ns3AiMsgFieldType : uint16_t
 {
@@ -436,8 +445,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
             m_sync = m_segment->construct<Ns3AiMsgSync>(lockable_name)();
             m_header = m_segment->construct<Ns3AiMsgProtocolHeader>(header_name)();
-            InitializeSyncState();
+            // 先初始化协议头，再发布 sync state。m_sessionState = Init 的 release store
+            // 作为门闩，确保所有 protocol header 写入对 opener 可见。
             InitializeProtocolHeader();
+            InitializeSyncState();
         }
         else
         {
@@ -645,7 +656,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     void CppSendEnd()
     {
         EnsurePeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Sending, "CppSendEnd");
-        Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+        SemPostWithDiag(&m_sync->m_cpp2pyFullCount, "cpp2pyFullCount");
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
     };
 
@@ -682,7 +693,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     void CppRecvEnd()
     {
         EnsurePeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Receiving, "CppRecvEnd");
-        Ns3AiSemaphore::sem_post(&m_sync->m_py2cppEmptyCount);
+        SemPostWithDiag(&m_sync->m_py2cppEmptyCount, "py2cppEmptyCount");
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
     };
 
@@ -730,7 +741,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         if (m_pyRecvHasCpp2PySlot)
         {
             EnsurePeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Receiving, "PyRecvEnd");
-            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyEmptyCount);
+            SemPostWithDiag(&m_sync->m_cpp2pyEmptyCount, "cpp2pyEmptyCount");
             m_pyRecvHasCpp2PySlot = false;
             SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
         }
@@ -787,7 +798,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     void PySendEnd()
     {
         EnsurePeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Sending, "PySendEnd");
-        Ns3AiSemaphore::sem_post(&m_sync->m_py2cppFullCount);
+        SemPostWithDiag(&m_sync->m_py2cppFullCount, "py2cppFullCount");
         SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
     };
 
@@ -1058,21 +1069,22 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void InitializeProtocolHeader()
     {
-        m_header->m_magic = NS3_AI_MSG_HEADER_MAGIC;
-        m_header->m_abiVersion = NS3_AI_MSG_ABI_VERSION;
-        m_header->m_headerSize = sizeof(Ns3AiMsgProtocolHeader);
+        // 所有 header 字段使用 release store，与 ValidateProtocolHeader 中的
+        // acquire load 配对。m_sessionState = Init 的最终 release store
+        // 作为全局门闩发布整个 header。
+        m_header->m_magic.store(NS3_AI_MSG_HEADER_MAGIC, std::memory_order_release);
+        m_header->m_abiVersion.store(NS3_AI_MSG_ABI_VERSION, std::memory_order_release);
+        m_header->m_headerSize.store(sizeof(Ns3AiMsgProtocolHeader), std::memory_order_release);
         m_header->m_sessionId.store(
             MakeSessionId(m_segName, m_cpp2pyMsgName, m_py2cppMsgName, m_lockableName, m_headerName),
             std::memory_order_release);
         m_header->m_generationId.store(MakeGenerationId(), std::memory_order_release);
-        m_header->m_cpp2pyPayloadSize = sizeof(Cpp2PyMsgType);
-        m_header->m_py2cppPayloadSize = sizeof(Py2CppMsgType);
-        m_header->m_cpp2pySchemaHash = m_cpp2pySchemaHash;
-        m_header->m_py2cppSchemaHash = m_py2cppSchemaHash;
-        m_header->m_cpp2pySchemaVersion = m_cpp2pySchemaVersion;
-        m_header->m_py2cppSchemaVersion = m_py2cppSchemaVersion;
-        // 门闩在 InitializeSyncState 中：m_sessionState = Init 的 release store
-        // 确保 protocol header 写入对 opener 可见。
+        m_header->m_cpp2pyPayloadSize.store(sizeof(Cpp2PyMsgType), std::memory_order_release);
+        m_header->m_py2cppPayloadSize.store(sizeof(Py2CppMsgType), std::memory_order_release);
+        m_header->m_cpp2pySchemaHash.store(m_cpp2pySchemaHash, std::memory_order_release);
+        m_header->m_py2cppSchemaHash.store(m_py2cppSchemaHash, std::memory_order_release);
+        m_header->m_cpp2pySchemaVersion.store(m_cpp2pySchemaVersion, std::memory_order_release);
+        m_header->m_py2cppSchemaVersion.store(m_py2cppSchemaVersion, std::memory_order_release);
     };
 
     void ValidateProtocolHeader() const
@@ -1083,30 +1095,34 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             oss << "ns3-ai message interface could not find protocol header '" << m_headerName << "'.";
             throw std::runtime_error(oss.str());
         }
-        if (m_header->m_magic != NS3_AI_MSG_HEADER_MAGIC ||
-            m_header->m_abiVersion != NS3_AI_MSG_ABI_VERSION ||
-            m_header->m_headerSize != sizeof(Ns3AiMsgProtocolHeader))
+        if (m_header->m_magic.load(std::memory_order_acquire) != NS3_AI_MSG_HEADER_MAGIC ||
+            m_header->m_abiVersion.load(std::memory_order_acquire) != NS3_AI_MSG_ABI_VERSION ||
+            m_header->m_headerSize.load(std::memory_order_acquire) != sizeof(Ns3AiMsgProtocolHeader))
         {
             ThrowProtocolHeaderFailure("header magic, ABI version, or size mismatch");
         }
-        if (m_header->m_cpp2pyPayloadSize != sizeof(Cpp2PyMsgType) ||
-            m_header->m_py2cppPayloadSize != sizeof(Py2CppMsgType))
+        if (m_header->m_cpp2pyPayloadSize.load(std::memory_order_acquire) != sizeof(Cpp2PyMsgType) ||
+            m_header->m_py2cppPayloadSize.load(std::memory_order_acquire) != sizeof(Py2CppMsgType))
         {
             ThrowProtocolHeaderFailure("payload size mismatch");
         }
-        if (m_cpp2pySchemaHash != 0 && m_header->m_cpp2pySchemaHash != m_cpp2pySchemaHash)
+        if (m_cpp2pySchemaHash != 0 &&
+            m_header->m_cpp2pySchemaHash.load(std::memory_order_acquire) != m_cpp2pySchemaHash)
         {
             ThrowProtocolHeaderFailure("cpp2py schema hash mismatch");
         }
-        if (m_py2cppSchemaHash != 0 && m_header->m_py2cppSchemaHash != m_py2cppSchemaHash)
+        if (m_py2cppSchemaHash != 0 &&
+            m_header->m_py2cppSchemaHash.load(std::memory_order_acquire) != m_py2cppSchemaHash)
         {
             ThrowProtocolHeaderFailure("py2cpp schema hash mismatch");
         }
-        if (m_cpp2pySchemaVersion != 0 && m_header->m_cpp2pySchemaVersion != m_cpp2pySchemaVersion)
+        if (m_cpp2pySchemaVersion != 0 &&
+            m_header->m_cpp2pySchemaVersion.load(std::memory_order_acquire) != m_cpp2pySchemaVersion)
         {
             ThrowProtocolHeaderFailure("cpp2py schema version mismatch");
         }
-        if (m_py2cppSchemaVersion != 0 && m_header->m_py2cppSchemaVersion != m_py2cppSchemaVersion)
+        if (m_py2cppSchemaVersion != 0 &&
+            m_header->m_py2cppSchemaVersion.load(std::memory_order_acquire) != m_py2cppSchemaVersion)
         {
             ThrowProtocolHeaderFailure("py2cpp schema version mismatch");
         }
@@ -1155,9 +1171,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         if (result == Ns3AiSemaphore::WaitResult::Aborted)
         {
-            // 对端完成是正常结束，不是错误
+            // 对端完成是正常结束，不标记错误、不抛异常
             SetPeerState(peer, Ns3AiMsgPeerState::Finished);
-            ThrowSyncFailure(operation, waitTarget, peer, counter);
+            return;
         }
         MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
         ThrowSyncFailure(operation, waitTarget, peer, counter);
@@ -1186,6 +1202,20 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             << "Increase the timeout with Ns3AiMsgInterface::SetSyncTimeoutUs(), "
             << "or set it to 0 to restore unbounded waiting for intentionally long inference.";
         throw std::runtime_error(oss.str());
+    };
+
+    /**
+     * sem_post 包装：调用 exchange(1) 后检查旧值，若 >=1 输出诊断。
+     * 用于检测重复释放协议 bug，避免静默丢失计数信号量语义。
+     */
+    static void SemPostWithDiag(std::atomic<uint8_t>* counter, const char* name)
+    {
+        const uint8_t old = Ns3AiSemaphore::sem_post(counter);
+        if (old >= 1)
+        {
+            std::cerr << "ns3-ai [" << name << "] duplicate sem_post: old=" << +old
+                      << " (protocol bug)" << std::endl;
+        }
     };
 
     std::unique_ptr<boost::interprocess::managed_shared_memory> m_segment;

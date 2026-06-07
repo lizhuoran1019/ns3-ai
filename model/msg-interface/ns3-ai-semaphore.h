@@ -149,7 +149,10 @@ struct Ns3AiSemaphore
 
     /**
      * 释放令牌（计数器置 1）。
-     * \return 旧值。若返回值 >= 1，表示重复释放（协议 bug），记录诊断日志。
+     *
+     * 使用 exchange(1) 饱和写入，避免 uint8_t 回绕。
+     * 若旧值 >= 1，表示重复释放（协议 bug），输出诊断日志。
+     * \return 旧值。
      */
     static inline uint8_t sem_post(std::atomic<uint8_t>* mem)
     {
