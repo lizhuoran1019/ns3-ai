@@ -195,7 +195,7 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         with self.assertRaises(Ns3AiSessionTimeoutError):
             interface.wait_ready(timeout=0)
 
-    def test_close_wrapper_uses_python_peer_and_requires_close_reason_enum(self):
+    def test_request_close_forwards_python_peer_and_close_reason(self):
         raw_interface = FakeMessageInterface()
         interface = Ns3AiMsgInterface(raw_interface)
 
@@ -206,13 +206,22 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
             [("RequestClose", Peer.Py, CloseReason.UserInterrupted)],
         )
 
+    def test_request_close_rejects_non_enum_reason(self):
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
         with self.assertRaises(TypeError):
             interface.request_close("UserInterrupted")
 
+    def test_acknowledge_close_forwards_python_peer(self):
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
         interface.acknowledge_close()
+
         self.assertEqual(
-            raw_interface.calls[-1],
-            ("AcknowledgeClose", Peer.Py),
+            raw_interface.calls,
+            [("AcknowledgeClose", Peer.Py)],
         )
 
     def test_delegated_mailbox_error_is_structured_only_when_session_failed(self):
