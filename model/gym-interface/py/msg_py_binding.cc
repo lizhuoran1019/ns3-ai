@@ -19,9 +19,9 @@
 
 #include <ns3/ai-module.h>
 
-#include <pybind11/pybind11.h>
+#include "ns3-ai-pybind-errors.h"
 
-#include <stdexcept>
+#include <pybind11/pybind11.h>
 
 namespace py = pybind11;
 
@@ -33,7 +33,7 @@ ValidateGymMsgSize(const Ns3AiGymMsg& msg)
 {
     if (msg.size > MSG_BUFFER_SIZE)
     {
-        throw std::runtime_error("ns3-ai Gym message size exceeds the configured buffer size");
+        throw ns3::Ns3AiRuntimeError("ns3-ai Gym message size exceeds the configured buffer size");
     }
 }
 
@@ -41,6 +41,7 @@ ValidateGymMsgSize(const Ns3AiGymMsg& msg)
 
 PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 {
+    ns3::BindNs3AiErrorTypes(m);
     using GymMsgInterface = ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
 
     m.attr("msg_buffer_size") = MSG_BUFFER_SIZE;

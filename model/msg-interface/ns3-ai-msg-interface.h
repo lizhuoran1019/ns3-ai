@@ -9,6 +9,7 @@
 #ifndef NS3_AI_MSG_INTERFACE_H
 #define NS3_AI_MSG_INTERFACE_H
 
+#include "ns3-ai-errors.h"
 #include "ns3-ai-semaphore.h"
 
 #include <ns3/singleton.h>
@@ -467,19 +468,20 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             {
                 m_cpp2pyVector = m_segment->find<Cpp2PyMsgVector>(cpp2py_msg_name).first;
                 m_py2cppVector = m_segment->find<Py2CppMsgVector>(py2cpp_msg_name).first;
-                assert(m_cpp2pyVector != nullptr);
-                assert(m_py2cppVector != nullptr);
+                RequireNonNull(m_cpp2pyVector, m_segName, "cpp2py_msg_vector", cpp2py_msg_name);
+                RequireNonNull(m_py2cppVector, m_segName, "py2cpp_msg_vector", py2cpp_msg_name);
             }
             else
             {
                 m_cpp2pyStruct = m_segment->find<Cpp2PyMsgType>(cpp2py_msg_name).first;
                 m_py2CppStruct = m_segment->find<Py2CppMsgType>(py2cpp_msg_name).first;
-                assert(m_cpp2pyStruct != nullptr);
-                assert(m_py2CppStruct != nullptr);
+                RequireNonNull(m_cpp2pyStruct, m_segName, "cpp2py_msg_struct", cpp2py_msg_name);
+                RequireNonNull(m_py2CppStruct, m_segName, "py2cpp_msg_struct", py2cpp_msg_name);
             }
             m_sync = m_segment->find<Ns3AiMsgSync>(lockable_name).first;
             m_header = m_segment->find<Ns3AiMsgProtocolHeader>(header_name).first;
-            assert(m_sync != nullptr);
+            RequireNonNull(m_sync, m_segName, "sync", lockable_name);
+            RequireNonNull(m_header, m_segName, "header", header_name);
             ValidateProtocolHeader();
         }
     };
@@ -507,25 +509,45 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     Cpp2PyMsgType* GetCpp2PyStruct()
     {
-        assert(!m_useVector);
+        if (m_useVector)
+        {
+            throw Ns3AiProtocolError(
+                "ns3-ai message interface access mode mismatch in GetCpp2PyStruct: "
+                "interface is configured for vector mode, not struct mode");
+        }
         return m_cpp2pyStruct;
     };
 
     Py2CppMsgType* GetPy2CppStruct()
     {
-        assert(!m_useVector);
+        if (m_useVector)
+        {
+            throw Ns3AiProtocolError(
+                "ns3-ai message interface access mode mismatch in GetPy2CppStruct: "
+                "interface is configured for vector mode, not struct mode");
+        }
         return m_py2CppStruct;
     };
 
     Cpp2PyMsgVector* GetCpp2PyVector()
     {
-        assert(m_useVector);
+        if (!m_useVector)
+        {
+            throw Ns3AiProtocolError(
+                "ns3-ai message interface access mode mismatch in GetCpp2PyVector: "
+                "interface is configured for struct mode, not vector mode");
+        }
         return m_cpp2pyVector;
     };
 
     Py2CppMsgVector* GetPy2CppVector()
     {
-        assert(m_useVector);
+        if (!m_useVector)
+        {
+            throw Ns3AiProtocolError(
+                "ns3-ai message interface access mode mismatch in GetPy2CppVector: "
+                "interface is configured for struct mode, not vector mode");
+        }
         return m_py2cppVector;
     };
 
@@ -709,13 +731,13 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void CppSetFinished()
     {
-        assert(m_handleFinish);
+        RequireFinishConfigured("CppSetFinished");
         TryCppSetFinished();
     };
 
     bool TryCppSetFinished()
     {
-        assert(m_handleFinish);
+        RequireFinishConfigured("TryCppSetFinished");
         if (m_isFinished || m_sync->m_isFinished.load(std::memory_order_acquire))
         {
             m_isFinished = true;
@@ -814,7 +836,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     bool PyGetFinished()
     {
-        assert(m_handleFinish);
+        RequireFinishConfigured("PyGetFinished");
         m_isFinished = m_sync->m_isFinished.load(std::memory_order_acquire);
         if (m_isFinished)
         {
@@ -972,7 +994,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             std::ostringstream oss;
             oss << "ns3-ai message interface invalid session state in " << operation << ": expected "
                 << expected << ", got " << actual << ".";
-            throw std::runtime_error(oss.str());
+            throw Ns3AiProtocolError(oss.str());
         }
     };
 
@@ -1015,7 +1037,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             std::ostringstream oss;
             oss << "ns3-ai message interface invalid session state in " << operation
                 << ": expected ready or running, got " << actual << ".";
-            throw std::runtime_error(oss.str());
+            throw Ns3AiProtocolError(oss.str());
         }
     };
 
@@ -1040,7 +1062,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             << PeerName(peer) << " peer: expected " << StateName(expected) << ", got "
             << StateName(actual) << ". Check send/receive ordering and avoid reusing a shared-memory "
             << "segment after an abnormal peer exit without recreating the session.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiProtocolError(oss.str());
     };
 
     Ns3AiSemaphore::WaitResult WaitForSync(std::atomic<uint8_t>* counter, bool abortOnFinished)
@@ -1074,6 +1096,34 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         // Timeout
         return false;
+    };
+
+    void RequireFinishConfigured(const char* operation) const
+    {
+        if (!m_handleFinish)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface finish operations are not configured: "
+                << "set handle_finish=true before using " << operation << ".";
+            throw Ns3AiRuntimeError(oss.str());
+        }
+    };
+
+    template <typename T>
+    void RequireNonNull(const T* ptr,
+                        const std::string& segmentName,
+                        const char* objectKind,
+                        const char* objectName) const
+    {
+        if (!ptr)
+        {
+            std::ostringstream oss;
+            oss << "ns3-ai message interface missing shared-memory object in segment '"
+                << segmentName << "': object='" << objectName << "', kind='" << objectKind
+                << "'. Ensure the creator peer has created this object "
+                << "and the segment/object names match.";
+            throw Ns3AiRuntimeError(oss.str());
+        }
     };
 
     void InitializeProtocolHeader()
@@ -1124,7 +1174,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                            "publication after "
                         << m_syncTimeoutUs << " us. The creator may have crashed before "
                                                "initializing the shared-memory protocol header.";
-                    throw std::runtime_error(oss.str());
+                    throw Ns3AiTimeoutError(oss.str());
                 }
             }
             Ns3AiSemaphore::Backoff(attempts++);
@@ -1137,7 +1187,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             std::ostringstream oss;
             oss << "ns3-ai message interface could not find protocol header '" << m_headerName << "'.";
-            throw std::runtime_error(oss.str());
+            throw Ns3AiRuntimeError(oss.str());
         }
 
         WaitForHeaderPublished();
@@ -1156,22 +1206,22 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         if (m_cpp2pySchemaHash != 0 &&
             m_header->m_cpp2pySchemaHash.load(std::memory_order_acquire) != m_cpp2pySchemaHash)
         {
-            ThrowProtocolHeaderFailure("cpp2py schema hash mismatch");
+            ThrowSchemaHeaderFailure("cpp2py schema hash mismatch");
         }
         if (m_py2cppSchemaHash != 0 &&
             m_header->m_py2cppSchemaHash.load(std::memory_order_acquire) != m_py2cppSchemaHash)
         {
-            ThrowProtocolHeaderFailure("py2cpp schema hash mismatch");
+            ThrowSchemaHeaderFailure("py2cpp schema hash mismatch");
         }
         if (m_cpp2pySchemaVersion != 0 &&
             m_header->m_cpp2pySchemaVersion.load(std::memory_order_acquire) != m_cpp2pySchemaVersion)
         {
-            ThrowProtocolHeaderFailure("cpp2py schema version mismatch");
+            ThrowSchemaHeaderFailure("cpp2py schema version mismatch");
         }
         if (m_py2cppSchemaVersion != 0 &&
             m_header->m_py2cppSchemaVersion.load(std::memory_order_acquire) != m_py2cppSchemaVersion)
         {
-            ThrowProtocolHeaderFailure("py2cpp schema version mismatch");
+            ThrowSchemaHeaderFailure("py2cpp schema version mismatch");
         }
         // 门闩：m_sessionState = Ready 的 release store 确保 creator 看到 opener 已校验通过
         m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Ready),
@@ -1184,7 +1234,16 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         std::ostringstream oss;
         oss << "ns3-ai message interface protocol header validation failed for '" << m_headerName
             << "': " << reason << ". Check that both peers use the same message schema and ABI.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiProtocolError(oss.str());
+    };
+
+    [[noreturn]] void ThrowSchemaHeaderFailure(const char* reason) const
+    {
+        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
+        std::ostringstream oss;
+        oss << "ns3-ai message interface protocol header schema validation failed for '"
+            << m_headerName << "': " << reason << ".";
+        throw Ns3AiSchemaError(oss.str());
     };
 
     /**
@@ -1226,7 +1285,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                 << " for " << PeerName(peer) << " peer: the peer has finished. "
                 << "Current states: C++=" << StateName(GetPeerState(Ns3AiMsgPeer::Cpp))
                 << ", Python=" << StateName(GetPeerState(Ns3AiMsgPeer::Py)) << ".";
-            throw std::runtime_error(oss.str());
+            throw Ns3AiProtocolError(oss.str());
         }
         MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
         ThrowSyncFailure(operation, waitTarget, peer, counter);
@@ -1254,7 +1313,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             << "Check that C++ and Python send/recv calls are paired in the same order. "
             << "Increase the timeout with Ns3AiMsgInterface::SetSyncTimeoutUs(), "
             << "or set it to 0 to restore unbounded waiting for intentionally long inference.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiTimeoutError(oss.str());
     };
 
     /**

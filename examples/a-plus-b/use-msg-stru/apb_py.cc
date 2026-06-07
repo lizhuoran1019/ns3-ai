@@ -21,6 +21,8 @@
 
 #include <ns3/ai-module.h>
 
+#include "ns3-ai-pybind-errors.h"
+
 #include <iostream>
 #include <pybind11/pybind11.h>
 
@@ -28,6 +30,7 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(ns3ai_apb_py_stru, m)
 {
+    ns3::BindNs3AiErrorTypes(m);
     py::class_<EnvStruct>(m, "PyEnvStruct")
         .def(py::init<>())
         .def_readwrite("a", &EnvStruct::env_a)

@@ -21,12 +21,15 @@
 
 #include <ns3/ai-module.h>
 
+#include "ns3-ai-pybind-errors.h"
+
 #include <pybind11/pybind11.h>
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
 {
+    ns3::BindNs3AiErrorTypes(m);
     py::class_<ns3::TcpRlEnv>(m, "PyEnvStruct")
         .def(py::init<>())
         .def_readwrite("nodeId", &ns3::TcpRlEnv::nodeId)

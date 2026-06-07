@@ -104,7 +104,7 @@ BindNs3AiScalarField(py::class_<StructType>& pyClass, const Ns3AiMsgField& field
     {
         std::ostringstream oss;
         oss << "ns3-ai schema field '" << field.m_name << "' does not match the requested scalar type";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiSchemaError(oss.str());
     }
 
     const std::string name = field.m_name;
@@ -163,7 +163,7 @@ BindNs3AiField(py::class_<StructType>& pyClass, const Ns3AiMsgField& field)
 
     std::ostringstream oss;
     oss << "ns3-ai schema field '" << field.m_name << "' cannot be bound as a scalar field";
-    throw std::runtime_error(oss.str());
+    throw Ns3AiSchemaError(oss.str());
 }
 
 template <typename StructType>
@@ -174,7 +174,7 @@ BindNs3AiSchemaStruct(py::module_& module, const Ns3AiMsgSchema& schema)
     {
         std::ostringstream oss;
         oss << "ns3-ai schema size for '" << schema.m_name << "' does not match the C++ struct size";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiSchemaError(oss.str());
     }
 
     py::class_<StructType> pyClass(module, schema.m_name.c_str());

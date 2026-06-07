@@ -4,6 +4,7 @@ build_lib_example(
         LIBRARIES_TO_LINK ${libai}
 )
 pybind11_add_module(ns3ai_apb_py_vec use-msg-vec/apb_py.cc)
+target_include_directories(ns3ai_apb_py_vec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../model/msg-interface)
 set_target_properties(ns3ai_apb_py_vec PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/use-msg-vec)
 
@@ -13,6 +14,7 @@ build_lib_example(
         LIBRARIES_TO_LINK ${libai}
 )
 pybind11_add_module(ns3ai_apb_py_stru use-msg-stru/apb_py.cc)
+target_include_directories(ns3ai_apb_py_stru PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../model/msg-interface)
 set_target_properties(ns3ai_apb_py_stru PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/use-msg-stru)
 
