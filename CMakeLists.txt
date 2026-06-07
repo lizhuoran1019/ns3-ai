@@ -103,7 +103,7 @@ set(msg_interface_srcs )
 # Keep pybind-only helper headers out of build_lib HEADER_FILES: ns-3 generates an aggregate
 # module header from this list, and including pybind11 there forces every C++ executable to link
 # against libpython even when it does not use Python bindings.
-set(msg_interface_hdrs model/msg-interface/ns3-ai-msg-interface.h)
+set(msg_interface_hdrs model/msg-interface/ns3-ai-msg-interface.h model/msg-interface/ns3-ai-semaphore.h)
 set(gym_interface_srcs
         model/gym-interface/cpp/ns3-ai-gym-interface.cc
         model/gym-interface/cpp/ns3-ai-gym-env.cc
@@ -163,7 +163,7 @@ build_lib(
         SOURCE_FILES ${msg_interface_srcs} ${gym_interface_srcs}
         HEADER_FILES ${msg_interface_hdrs} ${gym_interface_hdrs}
         LIBRARIES_TO_LINK ${libcore} protobuf::libprotobuf
-        TEST_SOURCES test/msg-interface-session-lifecycle-test-suite.cc
+        TEST_SOURCES test/msg-interface-session-lifecycle-test-suite.cc test/ns3-ai-semaphore-test-suite.cc
 )
 add_dependencies(${libai} proto-objects)
 

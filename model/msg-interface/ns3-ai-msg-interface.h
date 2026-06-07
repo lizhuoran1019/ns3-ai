@@ -17,6 +17,7 @@
 #include <boost/interprocess/containers/vector.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -38,6 +39,37 @@ namespace ns3
 
 static constexpr uint32_t NS3_AI_MSG_HEADER_MAGIC = 0x4E334149;
 static constexpr uint16_t NS3_AI_MSG_ABI_VERSION = 1;
+
+/* ---- ABI 静态断言：std::atomic 在共享内存中的布局安全 ---- */
+static_assert(sizeof(std::atomic<uint8_t>) == sizeof(uint8_t),
+              "std::atomic<uint8_t> 的大小必须等于 uint8_t");
+static_assert(sizeof(std::atomic<uint16_t>) == sizeof(uint16_t),
+              "std::atomic<uint16_t> 的大小必须等于 uint16_t");
+static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t),
+              "std::atomic<uint32_t> 的大小必须等于 uint32_t");
+static_assert(sizeof(std::atomic<uint64_t>) == sizeof(uint64_t),
+              "std::atomic<uint64_t> 的大小必须等于 uint64_t");
+static_assert(sizeof(std::atomic<bool>) == sizeof(bool),
+              "std::atomic<bool> 的大小必须等于 bool");
+static_assert(std::atomic<uint8_t>::is_always_lock_free,
+              "std::atomic<uint8_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<uint16_t>::is_always_lock_free,
+              "std::atomic<uint16_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<uint32_t>::is_always_lock_free,
+              "std::atomic<uint32_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<uint64_t>::is_always_lock_free,
+              "std::atomic<uint64_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<bool>::is_always_lock_free,
+              "std::atomic<bool> 在共享内存中必须为无锁");
+
+static_assert(alignof(std::atomic<uint8_t>) == alignof(uint8_t),
+              "std::atomic<uint8_t> 的对齐必须等于 uint8_t");
+static_assert(alignof(std::atomic<uint16_t>) == alignof(uint16_t),
+              "std::atomic<uint16_t> 的对齐必须等于 uint16_t");
+static_assert(alignof(std::atomic<uint32_t>) == alignof(uint32_t),
+              "std::atomic<uint32_t> 的对齐必须等于 uint32_t");
+static_assert(alignof(std::atomic<uint64_t>) == alignof(uint64_t),
+              "std::atomic<uint64_t> 的对齐必须等于 uint64_t");
 
 enum class Ns3AiMsgPeer : uint8_t
 {
@@ -155,38 +187,60 @@ operator<<(std::ostream& os, Ns3AiMsgErrorReason reason)
     return os << "unknown";
 }
 
+/**
+ * \brief 共享内存会话同步状态。
+ *
+ * 所有字段通过 std::atomic 访问以实现跨进程安全。布局与旧版 volatile 字段兼容。
+ */
 struct Ns3AiMsgSync
 {
-    volatile uint8_t m_cpp2pyEmptyCount{1};
-    volatile uint8_t m_cpp2pyFullCount{0};
-    volatile uint8_t m_py2cppEmptyCount{1};
-    volatile uint8_t m_py2cppFullCount{0};
-    volatile bool m_isFinished{false};
-    volatile uint8_t m_sessionState{static_cast<uint8_t>(Ns3AiMsgSessionState::Init)};
-    volatile uint8_t m_closeReason{static_cast<uint8_t>(Ns3AiMsgCloseReason::None)};
-    volatile uint8_t m_closeRequester{0};
-    volatile uint8_t m_closeAcknowledger{0};
-    volatile uint8_t m_errorReason{static_cast<uint8_t>(Ns3AiMsgErrorReason::None)};
-    volatile uint8_t m_cppState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
-    volatile uint8_t m_pyState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
-    volatile uint8_t m_lastErrorPeer{0};
-    volatile uint8_t m_lastErrorCode{0};
+    std::atomic<uint8_t> m_cpp2pyEmptyCount{1};
+    std::atomic<uint8_t> m_cpp2pyFullCount{0};
+    std::atomic<uint8_t> m_py2cppEmptyCount{1};
+    std::atomic<uint8_t> m_py2cppFullCount{0};
+    std::atomic<bool> m_isFinished{false};
+    std::atomic<uint8_t> m_sessionState{static_cast<uint8_t>(Ns3AiMsgSessionState::Init)};
+    std::atomic<uint8_t> m_closeReason{static_cast<uint8_t>(Ns3AiMsgCloseReason::None)};
+    std::atomic<uint8_t> m_closeRequester{0};
+    std::atomic<uint8_t> m_closeAcknowledger{0};
+    std::atomic<uint8_t> m_errorReason{static_cast<uint8_t>(Ns3AiMsgErrorReason::None)};
+    std::atomic<uint8_t> m_cppState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
+    std::atomic<uint8_t> m_pyState{static_cast<uint8_t>(Ns3AiMsgPeerState::Ready)};
+    std::atomic<uint8_t> m_lastErrorPeer{0};
+    std::atomic<uint8_t> m_lastErrorCode{0};
 };
 
+/* ---- ABI 静态断言：Ns3AiMsgSync 布局锁定 ---- */
+static_assert(sizeof(Ns3AiMsgSync) == 14,
+              "Ns3AiMsgSync sizeof 不可改变，否则破坏共享内存布局");
+
+/**
+ * \brief 共享内存协议头。
+ *
+ * 所有跨进程读写的字段使用 std::atomic 确保发布性，
+ * 无需额外配对 __sync_synchronize() 全屏障。
+ */
 struct Ns3AiMsgProtocolHeader
 {
-    volatile uint32_t m_magic{NS3_AI_MSG_HEADER_MAGIC};
-    volatile uint16_t m_abiVersion{NS3_AI_MSG_ABI_VERSION};
-    volatile uint16_t m_headerSize{sizeof(Ns3AiMsgProtocolHeader)};
-    volatile uint64_t m_sessionId{0};
-    volatile uint64_t m_generationId{0};
-    volatile uint32_t m_cpp2pyPayloadSize{0};
-    volatile uint32_t m_py2cppPayloadSize{0};
-    volatile uint32_t m_cpp2pySchemaVersion{0};
-    volatile uint32_t m_py2cppSchemaVersion{0};
-    volatile uint64_t m_cpp2pySchemaHash{0};
-    volatile uint64_t m_py2cppSchemaHash{0};
+    // m_magic 默认 0 表示尚未发布。creator 在 InitializeProtocolHeader 末尾
+    // release-store 正确值作为门闩；opener 在 ValidateProtocolHeader 中
+    // acquire 等待 m_magic != 0 后才读取其他字段。
+    std::atomic<uint32_t> m_magic{0};
+    std::atomic<uint16_t> m_abiVersion{NS3_AI_MSG_ABI_VERSION};
+    std::atomic<uint16_t> m_headerSize{sizeof(Ns3AiMsgProtocolHeader)};
+    std::atomic<uint64_t> m_sessionId{0};
+    std::atomic<uint64_t> m_generationId{0};
+    std::atomic<uint32_t> m_cpp2pyPayloadSize{0};
+    std::atomic<uint32_t> m_py2cppPayloadSize{0};
+    std::atomic<uint32_t> m_cpp2pySchemaVersion{0};
+    std::atomic<uint32_t> m_py2cppSchemaVersion{0};
+    std::atomic<uint64_t> m_cpp2pySchemaHash{0};
+    std::atomic<uint64_t> m_py2cppSchemaHash{0};
 };
+
+/* ---- ABI 静态断言：Ns3AiMsgProtocolHeader 布局锁定 ---- */
+static_assert(sizeof(Ns3AiMsgProtocolHeader) == 56,
+              "Ns3AiMsgProtocolHeader sizeof 不可改变，否则破坏共享内存布局");
 
 enum class Ns3AiMsgFieldType : uint16_t
 {
@@ -400,8 +454,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
             m_sync = m_segment->construct<Ns3AiMsgSync>(lockable_name)();
             m_header = m_segment->construct<Ns3AiMsgProtocolHeader>(header_name)();
-            InitializeSyncState();
+            // 先初始化协议头（m_magic 最后 release-store 作为发布门闩），
+            // 再初始化同步状态。opener 在 ValidateProtocolHeader 中
+            // acquire 等待 m_magic != 0 后才读取 header 字段。
             InitializeProtocolHeader();
+            InitializeSyncState();
         }
         else
         {
@@ -494,32 +551,36 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     Ns3AiMsgSessionState GetSessionState() const
     {
-        return static_cast<Ns3AiMsgSessionState>(AtomicRead8(&m_sync->m_sessionState));
+        return static_cast<Ns3AiMsgSessionState>(
+            m_sync->m_sessionState.load(std::memory_order_acquire));
     };
 
     uint64_t GetSessionId() const
     {
-        return AtomicRead64(&m_header->m_sessionId);
+        return m_header->m_sessionId.load(std::memory_order_acquire);
     };
 
     uint64_t GetGenerationId() const
     {
-        return AtomicRead64(&m_header->m_generationId);
+        return m_header->m_generationId.load(std::memory_order_acquire);
     };
 
     Ns3AiMsgCloseReason GetCloseReason() const
     {
-        return static_cast<Ns3AiMsgCloseReason>(AtomicRead8(&m_sync->m_closeReason));
+        return static_cast<Ns3AiMsgCloseReason>(
+            m_sync->m_closeReason.load(std::memory_order_acquire));
     };
 
     Ns3AiMsgErrorReason GetErrorReason() const
     {
-        return static_cast<Ns3AiMsgErrorReason>(AtomicRead8(&m_sync->m_errorReason));
+        return static_cast<Ns3AiMsgErrorReason>(
+            m_sync->m_errorReason.load(std::memory_order_acquire));
     };
 
     Ns3AiMsgPeer GetLastErrorPeer() const
     {
-        return static_cast<Ns3AiMsgPeer>(AtomicRead8(&m_sync->m_lastErrorPeer));
+        return static_cast<Ns3AiMsgPeer>(
+            m_sync->m_lastErrorPeer.load(std::memory_order_acquire));
     };
 
     void RequestClose(Ns3AiMsgPeer peer, Ns3AiMsgCloseReason reason) const
@@ -532,11 +593,12 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
         }
         EnsureSessionStateReadyOrRunning("RequestClose");
-        AtomicStore8(&m_sync->m_closeReason, static_cast<uint8_t>(reason));
-        AtomicStore8(&m_sync->m_closeRequester, static_cast<uint8_t>(peer));
-        AtomicStore8(&m_sync->m_closeAcknowledger, 0);
-        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Closing));
-        __sync_synchronize();
+        m_sync->m_closeReason.store(static_cast<uint8_t>(reason), std::memory_order_release);
+        m_sync->m_closeRequester.store(static_cast<uint8_t>(peer), std::memory_order_release);
+        m_sync->m_closeAcknowledger.store(0, std::memory_order_release);
+        // 门闩：m_sessionState 的 release store 确保以上所有写入对另一端可见
+        m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Closing),
+                                     std::memory_order_release);
     };
 
     void AcknowledgeClose(Ns3AiMsgPeer peer) const
@@ -546,14 +608,14 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             return;
         }
         EnsureSessionState(Ns3AiMsgSessionState::Closing, "AcknowledgeClose");
-        if (AtomicRead8(&m_sync->m_closeRequester) == static_cast<uint8_t>(peer))
+        if (m_sync->m_closeRequester.load(std::memory_order_acquire) == static_cast<uint8_t>(peer))
         {
             throw std::runtime_error(
                 "ns3-ai message interface close acknowledgement must come from the peer that did not request close");
         }
-        AtomicStore8(&m_sync->m_closeAcknowledger, static_cast<uint8_t>(peer));
-        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Closed));
-        __sync_synchronize();
+        m_sync->m_closeAcknowledger.store(static_cast<uint8_t>(peer), std::memory_order_release);
+        m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Closed),
+                                     std::memory_order_release);
     };
 
     void ReportPeerDeath(Ns3AiMsgPeer peer) const
@@ -597,18 +659,14 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return false;
         }
-        if (!WaitForSync(&m_sync->m_cpp2pyEmptyCount, true))
-        {
-            MarkPeerError(Ns3AiMsgPeer::Cpp, Ns3AiMsgErrorReason::Timeout);
-            return false;
-        }
-        return true;
+        return HandleSyncResult(WaitForSync(&m_sync->m_cpp2pyEmptyCount, true),
+                                Ns3AiMsgPeer::Cpp);
     };
 
     void CppSendEnd()
     {
         EnsurePeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Sending, "CppSendEnd");
-        Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyFullCount);
+        SemPostWithDiag(&m_sync->m_cpp2pyFullCount, "cpp2pyFullCount");
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
     };
 
@@ -638,18 +696,14 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return false;
         }
-        if (!WaitForSync(&m_sync->m_py2cppFullCount, true))
-        {
-            MarkPeerError(Ns3AiMsgPeer::Cpp, Ns3AiMsgErrorReason::Timeout);
-            return false;
-        }
-        return true;
+        return HandleSyncResult(WaitForSync(&m_sync->m_py2cppFullCount, true),
+                                Ns3AiMsgPeer::Cpp);
     };
 
     void CppRecvEnd()
     {
         EnsurePeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Receiving, "CppRecvEnd");
-        Ns3AiSemaphore::sem_post(&m_sync->m_py2cppEmptyCount);
+        SemPostWithDiag(&m_sync->m_py2cppEmptyCount, "py2cppEmptyCount");
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
     };
 
@@ -662,16 +716,15 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     bool TryCppSetFinished()
     {
         assert(m_handleFinish);
-        if (m_isFinished || m_sync->m_isFinished)
+        if (m_isFinished || m_sync->m_isFinished.load(std::memory_order_acquire))
         {
             m_isFinished = true;
             SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Finished);
             return true;
         }
         m_isFinished = true;
-        m_sync->m_isFinished = true;
+        m_sync->m_isFinished.store(true, std::memory_order_release);
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Finished);
-        __sync_synchronize();
         return true;
     };
 
@@ -680,7 +733,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         BeginDataExchangeOrThrow("PyRecvBegin");
         if (!TryPyRecvBeginAfterSessionReady())
         {
-            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag", Ns3AiMsgPeer::Py);
+            ThrowSyncFailure("PyRecvBegin", "cpp2py full slot or finish flag", Ns3AiMsgPeer::Py, nullptr);
         }
     };
 
@@ -698,7 +751,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         if (m_pyRecvHasCpp2PySlot)
         {
             EnsurePeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Receiving, "PyRecvEnd");
-            Ns3AiSemaphore::sem_post(&m_sync->m_cpp2pyEmptyCount);
+            SemPostWithDiag(&m_sync->m_cpp2pyEmptyCount, "cpp2pyEmptyCount");
             m_pyRecvHasCpp2PySlot = false;
             SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
         }
@@ -730,29 +783,39 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return false;
         }
-        if (!WaitForSync(&m_sync->m_py2cppEmptyCount, true))
+        const auto result = WaitForSync(&m_sync->m_py2cppEmptyCount, true);
+        if (result == Ns3AiSemaphore::WaitResult::Acquired)
+        {
+            return true;
+        }
+        if (result == Ns3AiSemaphore::WaitResult::Aborted)
         {
             if (m_handleFinish)
             {
-                m_isFinished = m_sync->m_isFinished;
+                m_isFinished = m_sync->m_isFinished.load(std::memory_order_acquire);
             }
-            MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
+            SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
             return false;
         }
-        return true;
+        if (m_handleFinish)
+        {
+            m_isFinished = m_sync->m_isFinished.load(std::memory_order_acquire);
+        }
+        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
+        return false;
     };
 
     void PySendEnd()
     {
         EnsurePeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Sending, "PySendEnd");
-        Ns3AiSemaphore::sem_post(&m_sync->m_py2cppFullCount);
+        SemPostWithDiag(&m_sync->m_py2cppFullCount, "py2cppFullCount");
         SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
     };
 
     bool PyGetFinished()
     {
         assert(m_handleFinish);
-        m_isFinished = m_sync->m_isFinished;
+        m_isFinished = m_sync->m_isFinished.load(std::memory_order_acquire);
         if (m_isFinished)
         {
             SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
@@ -777,32 +840,13 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         if (m_handleFinish)
         {
-            m_isFinished = m_sync->m_isFinished;
+            m_isFinished = m_sync->m_isFinished.load(std::memory_order_acquire);
         }
         if (m_isFinished && !m_pyRecvHasCpp2PySlot)
         {
             SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Finished);
         }
         return true;
-    };
-    static uint8_t AtomicRead8(const volatile uint8_t* mem)
-    {
-        return __atomic_load_n(const_cast<const uint8_t*>(mem), __ATOMIC_ACQUIRE);
-    };
-
-    static void AtomicStore8(volatile uint8_t* mem, uint8_t value)
-    {
-        __atomic_store_n(const_cast<uint8_t*>(mem), value, __ATOMIC_RELEASE);
-    };
-
-    static uint64_t AtomicRead64(const volatile uint64_t* mem)
-    {
-        return __atomic_load_n(const_cast<const uint64_t*>(mem), __ATOMIC_ACQUIRE);
-    };
-
-    static void AtomicStore64(volatile uint64_t* mem, uint64_t value)
-    {
-        __atomic_store_n(const_cast<uint64_t*>(mem), value, __ATOMIC_RELEASE);
     };
 
     static uint64_t HashNamePart(uint64_t hash, const std::string& value)
@@ -856,47 +900,48 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         return "unknown";
     };
 
-    volatile uint8_t* PeerStatePtr(Ns3AiMsgPeer peer) const
+    std::atomic<uint8_t>* PeerStatePtr(Ns3AiMsgPeer peer) const
     {
         return (peer == Ns3AiMsgPeer::Cpp) ? &m_sync->m_cppState : &m_sync->m_pyState;
     };
 
     Ns3AiMsgPeerState GetPeerState(Ns3AiMsgPeer peer) const
     {
-        return static_cast<Ns3AiMsgPeerState>(AtomicRead8(PeerStatePtr(peer)));
+        return static_cast<Ns3AiMsgPeerState>(
+            PeerStatePtr(peer)->load(std::memory_order_acquire));
     };
 
     void SetPeerState(Ns3AiMsgPeer peer, Ns3AiMsgPeerState state) const
     {
-        AtomicStore8(PeerStatePtr(peer), static_cast<uint8_t>(state));
+        PeerStatePtr(peer)->store(static_cast<uint8_t>(state), std::memory_order_release);
     };
 
     void InitializeSyncState() const
     {
-        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Init));
-        AtomicStore8(&m_sync->m_closeReason, static_cast<uint8_t>(Ns3AiMsgCloseReason::None));
-        AtomicStore8(&m_sync->m_closeRequester, 0);
-        AtomicStore8(&m_sync->m_closeAcknowledger, 0);
-        AtomicStore8(&m_sync->m_errorReason, static_cast<uint8_t>(Ns3AiMsgErrorReason::None));
+        m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Init),
+                                     std::memory_order_release);
+        m_sync->m_closeReason.store(static_cast<uint8_t>(Ns3AiMsgCloseReason::None),
+                                    std::memory_order_release);
+        m_sync->m_closeRequester.store(0, std::memory_order_release);
+        m_sync->m_closeAcknowledger.store(0, std::memory_order_release);
+        m_sync->m_errorReason.store(static_cast<uint8_t>(Ns3AiMsgErrorReason::None),
+                                    std::memory_order_release);
         SetPeerState(Ns3AiMsgPeer::Cpp, Ns3AiMsgPeerState::Ready);
         SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
-        AtomicStore8(&m_sync->m_lastErrorPeer, 0);
-        AtomicStore8(&m_sync->m_lastErrorCode, 0);
-        __sync_synchronize();
+        m_sync->m_lastErrorPeer.store(0, std::memory_order_release);
+        m_sync->m_lastErrorCode.store(0, std::memory_order_release);
     };
 
     bool TryTransitionPeer(Ns3AiMsgPeer peer,
                            Ns3AiMsgPeerState expected,
                            Ns3AiMsgPeerState next) const
     {
-        volatile uint8_t* state = PeerStatePtr(peer);
+        std::atomic<uint8_t>* state = PeerStatePtr(peer);
         uint8_t current = static_cast<uint8_t>(expected);
-        return __atomic_compare_exchange_n(const_cast<uint8_t*>(state),
-                                           &current,
-                                           static_cast<uint8_t>(next),
-                                           false,
-                                           __ATOMIC_ACQ_REL,
-                                           __ATOMIC_ACQUIRE);
+        return state->compare_exchange_strong(current,
+                                              static_cast<uint8_t>(next),
+                                              std::memory_order_acq_rel,
+                                              std::memory_order_acquire);
     };
 
     void TransitionPeer(Ns3AiMsgPeer peer,
@@ -946,12 +991,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         // Running 是粘性状态：任意一次有效数据交换开始后，会话保持 RUNNING，
         // 直到显式关闭握手或结构化错误改变生命周期状态。
         uint8_t expected = static_cast<uint8_t>(Ns3AiMsgSessionState::Ready);
-        return __atomic_compare_exchange_n(const_cast<uint8_t*>(&m_sync->m_sessionState),
-                                           &expected,
-                                           static_cast<uint8_t>(Ns3AiMsgSessionState::Running),
-                                           false,
-                                           __ATOMIC_ACQ_REL,
-                                           __ATOMIC_ACQUIRE) ||
+        return m_sync->m_sessionState.compare_exchange_strong(
+                   expected,
+                   static_cast<uint8_t>(Ns3AiMsgSessionState::Running),
+                   std::memory_order_acq_rel,
+                   std::memory_order_acquire) ||
                expected == static_cast<uint8_t>(Ns3AiMsgSessionState::Running);
     };
 
@@ -978,11 +1022,12 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     void MarkPeerError(Ns3AiMsgPeer peer, Ns3AiMsgErrorReason reason) const
     {
         SetPeerState(peer, Ns3AiMsgPeerState::Error);
-        AtomicStore8(&m_sync->m_lastErrorPeer, static_cast<uint8_t>(peer));
-        AtomicStore8(&m_sync->m_lastErrorCode, static_cast<uint8_t>(reason));
-        AtomicStore8(&m_sync->m_errorReason, static_cast<uint8_t>(reason));
-        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Error));
-        __sync_synchronize();
+        m_sync->m_lastErrorPeer.store(static_cast<uint8_t>(peer), std::memory_order_release);
+        m_sync->m_lastErrorCode.store(static_cast<uint8_t>(reason), std::memory_order_release);
+        m_sync->m_errorReason.store(static_cast<uint8_t>(reason), std::memory_order_release);
+        // 门闩：m_sessionState 的 release store 确保以上所有写入对另一端可见
+        m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Error),
+                                     std::memory_order_release);
     };
 
     [[noreturn]] void ThrowInvalidState(Ns3AiMsgPeer peer,
@@ -998,62 +1043,92 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         throw std::runtime_error(oss.str());
     };
 
-    bool WaitForSync(volatile uint8_t* counter, bool abortOnFinished)
+    Ns3AiSemaphore::WaitResult WaitForSync(std::atomic<uint8_t>* counter, bool abortOnFinished)
     {
-        const volatile bool* abortFlag =
+        const std::atomic<bool>* abortFlag =
             (abortOnFinished && m_handleFinish) ? &m_sync->m_isFinished : nullptr;
         return Ns3AiSemaphore::sem_wait(counter, m_syncTimeoutUs, abortFlag);
     };
 
+    /**
+     * 替换原有的自建循环 + Backoff 调用，
+     * 统一走 Ns3AiSemaphore::sem_timed_wait + abort_flag。
+     */
     bool WaitForCpp2PyDataOrFinish()
+    {
+        const auto result =
+            Ns3AiSemaphore::sem_timed_wait(&m_sync->m_cpp2pyFullCount,
+                                           m_syncTimeoutUs,
+                                           m_handleFinish ? &m_sync->m_isFinished : nullptr);
+
+        if (result == Ns3AiSemaphore::WaitResult::Acquired)
+        {
+            m_pyRecvHasCpp2PySlot = true;
+            return true;
+        }
+        if (result == Ns3AiSemaphore::WaitResult::Aborted)
+        {
+            m_isFinished = true;
+            m_pyRecvHasCpp2PySlot = false;
+            return true;
+        }
+        // Timeout
+        return false;
+    };
+
+    void InitializeProtocolHeader()
+    {
+        // 先写入所有 header 字段（release store），最后写入 m_magic 作为发布门闩。
+        m_header->m_abiVersion.store(NS3_AI_MSG_ABI_VERSION, std::memory_order_release);
+        m_header->m_headerSize.store(sizeof(Ns3AiMsgProtocolHeader), std::memory_order_release);
+        m_header->m_sessionId.store(
+            MakeSessionId(m_segName, m_cpp2pyMsgName, m_py2cppMsgName, m_lockableName, m_headerName),
+            std::memory_order_release);
+        m_header->m_generationId.store(MakeGenerationId(), std::memory_order_release);
+        m_header->m_cpp2pyPayloadSize.store(sizeof(Cpp2PyMsgType), std::memory_order_release);
+        m_header->m_py2cppPayloadSize.store(sizeof(Py2CppMsgType), std::memory_order_release);
+        m_header->m_cpp2pySchemaHash.store(m_cpp2pySchemaHash, std::memory_order_release);
+        m_header->m_py2cppSchemaHash.store(m_py2cppSchemaHash, std::memory_order_release);
+        m_header->m_cpp2pySchemaVersion.store(m_cpp2pySchemaVersion, std::memory_order_release);
+        m_header->m_py2cppSchemaVersion.store(m_py2cppSchemaVersion, std::memory_order_release);
+        // 门闩：m_magic release-store 确保以上所有写入对 opener 可见
+        m_header->m_magic.store(NS3_AI_MSG_HEADER_MAGIC, std::memory_order_release);
+    };
+
+    /**
+     * 等待 creator 完成 InitializeProtocolHeader 的发布门闩。
+     *
+     * m_magic 默认 0，creator 在所有 header 字段写入完成后最后一步
+     * release-store 正确值。opener 在此 acquire 等待 m_magic != 0，
+     * 确保后续读取所有 header 字段时已看到完成状态。
+     *
+     * 若 m_syncTimeoutUs > 0，超时后标记 Error 并抛异常。
+     * 若 m_syncTimeoutUs == 0，无限期等待。
+     */
+    void WaitForHeaderPublished() const
     {
         const auto start = std::chrono::steady_clock::now();
         uint32_t attempts = 0;
-        while (true)
+
+        while (m_header->m_magic.load(std::memory_order_acquire) == 0)
         {
-            if (Ns3AiSemaphore::sem_try_wait(&m_sync->m_cpp2pyFullCount))
-            {
-                m_pyRecvHasCpp2PySlot = true;
-                return true;
-            }
-            if (m_handleFinish && m_sync->m_isFinished)
-            {
-                m_isFinished = true;
-                m_pyRecvHasCpp2PySlot = false;
-                return true;
-            }
             if (m_syncTimeoutUs > 0)
             {
                 const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - start);
                 if (static_cast<uint64_t>(elapsed.count()) >= m_syncTimeoutUs)
                 {
-                    return false;
+                    MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
+                    std::ostringstream oss;
+                    oss << "ns3-ai message interface timed out waiting for protocol header "
+                           "publication after "
+                        << m_syncTimeoutUs << " us. The creator may have crashed before "
+                                               "initializing the shared-memory protocol header.";
+                    throw std::runtime_error(oss.str());
                 }
             }
-            Backoff(attempts++);
+            Ns3AiSemaphore::Backoff(attempts++);
         }
-    };
-
-    void InitializeProtocolHeader()
-    {
-        m_header->m_magic = NS3_AI_MSG_HEADER_MAGIC;
-        m_header->m_abiVersion = NS3_AI_MSG_ABI_VERSION;
-        m_header->m_headerSize = sizeof(Ns3AiMsgProtocolHeader);
-        AtomicStore64(&m_header->m_sessionId,
-                      MakeSessionId(m_segName,
-                                    m_cpp2pyMsgName,
-                                    m_py2cppMsgName,
-                                    m_lockableName,
-                                    m_headerName));
-        AtomicStore64(&m_header->m_generationId, MakeGenerationId());
-        m_header->m_cpp2pyPayloadSize = sizeof(Cpp2PyMsgType);
-        m_header->m_py2cppPayloadSize = sizeof(Py2CppMsgType);
-        m_header->m_cpp2pySchemaHash = m_cpp2pySchemaHash;
-        m_header->m_py2cppSchemaHash = m_py2cppSchemaHash;
-        m_header->m_cpp2pySchemaVersion = m_cpp2pySchemaVersion;
-        m_header->m_py2cppSchemaVersion = m_py2cppSchemaVersion;
-        __sync_synchronize();
     };
 
     void ValidateProtocolHeader() const
@@ -1064,35 +1139,43 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             oss << "ns3-ai message interface could not find protocol header '" << m_headerName << "'.";
             throw std::runtime_error(oss.str());
         }
-        if (m_header->m_magic != NS3_AI_MSG_HEADER_MAGIC ||
-            m_header->m_abiVersion != NS3_AI_MSG_ABI_VERSION ||
-            m_header->m_headerSize != sizeof(Ns3AiMsgProtocolHeader))
+
+        WaitForHeaderPublished();
+
+        if (m_header->m_magic.load(std::memory_order_acquire) != NS3_AI_MSG_HEADER_MAGIC ||
+            m_header->m_abiVersion.load(std::memory_order_acquire) != NS3_AI_MSG_ABI_VERSION ||
+            m_header->m_headerSize.load(std::memory_order_acquire) != sizeof(Ns3AiMsgProtocolHeader))
         {
             ThrowProtocolHeaderFailure("header magic, ABI version, or size mismatch");
         }
-        if (m_header->m_cpp2pyPayloadSize != sizeof(Cpp2PyMsgType) ||
-            m_header->m_py2cppPayloadSize != sizeof(Py2CppMsgType))
+        if (m_header->m_cpp2pyPayloadSize.load(std::memory_order_acquire) != sizeof(Cpp2PyMsgType) ||
+            m_header->m_py2cppPayloadSize.load(std::memory_order_acquire) != sizeof(Py2CppMsgType))
         {
             ThrowProtocolHeaderFailure("payload size mismatch");
         }
-        if (m_cpp2pySchemaHash != 0 && m_header->m_cpp2pySchemaHash != m_cpp2pySchemaHash)
+        if (m_cpp2pySchemaHash != 0 &&
+            m_header->m_cpp2pySchemaHash.load(std::memory_order_acquire) != m_cpp2pySchemaHash)
         {
             ThrowProtocolHeaderFailure("cpp2py schema hash mismatch");
         }
-        if (m_py2cppSchemaHash != 0 && m_header->m_py2cppSchemaHash != m_py2cppSchemaHash)
+        if (m_py2cppSchemaHash != 0 &&
+            m_header->m_py2cppSchemaHash.load(std::memory_order_acquire) != m_py2cppSchemaHash)
         {
             ThrowProtocolHeaderFailure("py2cpp schema hash mismatch");
         }
-        if (m_cpp2pySchemaVersion != 0 && m_header->m_cpp2pySchemaVersion != m_cpp2pySchemaVersion)
+        if (m_cpp2pySchemaVersion != 0 &&
+            m_header->m_cpp2pySchemaVersion.load(std::memory_order_acquire) != m_cpp2pySchemaVersion)
         {
             ThrowProtocolHeaderFailure("cpp2py schema version mismatch");
         }
-        if (m_py2cppSchemaVersion != 0 && m_header->m_py2cppSchemaVersion != m_py2cppSchemaVersion)
+        if (m_py2cppSchemaVersion != 0 &&
+            m_header->m_py2cppSchemaVersion.load(std::memory_order_acquire) != m_py2cppSchemaVersion)
         {
             ThrowProtocolHeaderFailure("py2cpp schema version mismatch");
         }
-        AtomicStore8(&m_sync->m_sessionState, static_cast<uint8_t>(Ns3AiMsgSessionState::Ready));
-        __sync_synchronize();
+        // 门闩：m_sessionState = Ready 的 release store 确保 creator 看到 opener 已校验通过
+        m_sync->m_sessionState.store(static_cast<uint8_t>(Ns3AiMsgSessionState::Ready),
+                                     std::memory_order_release);
     };
 
     [[noreturn]] void ThrowProtocolHeaderFailure(const char* reason) const
@@ -1104,37 +1187,67 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         throw std::runtime_error(oss.str());
     };
 
-    void WaitOrThrow(volatile uint8_t* counter,
+    /**
+     * 统一处理 Try* 方法的同步结果：Acquired→true, Aborted→Finished, Timeout→Error。
+     */
+    bool HandleSyncResult(Ns3AiSemaphore::WaitResult result, Ns3AiMsgPeer peer)
+    {
+        if (result == Ns3AiSemaphore::WaitResult::Acquired)
+        {
+            return true;
+        }
+        if (result == Ns3AiSemaphore::WaitResult::Aborted)
+        {
+            SetPeerState(peer, Ns3AiMsgPeerState::Finished);
+            return false;
+        }
+        MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
+        return false;
+    };
+
+    void WaitOrThrow(std::atomic<uint8_t>* counter,
                      const char* operation,
                      const char* waitTarget,
                      bool abortOnFinished,
                      Ns3AiMsgPeer peer)
     {
-        if (!WaitForSync(counter, abortOnFinished))
+        const auto result = WaitForSync(counter, abortOnFinished);
+        if (result == Ns3AiSemaphore::WaitResult::Acquired)
         {
-            MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
-            ThrowSyncFailure(operation, waitTarget, peer);
+            return;
         }
+        if (result == Ns3AiSemaphore::WaitResult::Aborted)
+        {
+            // blocking API 被对端 finish 中止：Begin 已切换 peer state 但未拿到资源，
+            // 必须抛异常避免调用者误以为成功。
+            SetPeerState(peer, Ns3AiMsgPeerState::Finished);
+            std::ostringstream oss;
+            oss << "ns3-ai message interface aborted in " << operation
+                << " for " << PeerName(peer) << " peer: the peer has finished. "
+                << "Current states: C++=" << StateName(GetPeerState(Ns3AiMsgPeer::Cpp))
+                << ", Python=" << StateName(GetPeerState(Ns3AiMsgPeer::Py)) << ".";
+            throw std::runtime_error(oss.str());
+        }
+        MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
+        ThrowSyncFailure(operation, waitTarget, peer, counter);
     };
 
     [[noreturn]] void ThrowSyncFailure(const char* operation,
                                        const char* waitTarget,
-                                       Ns3AiMsgPeer peer) const
+                                       Ns3AiMsgPeer peer,
+                                       const std::atomic<uint8_t>* counter) const
     {
         std::ostringstream oss;
         oss << "ns3-ai message interface synchronization failed in " << operation
             << " for " << PeerName(peer) << " peer while waiting for " << waitTarget << ". ";
-        if (m_handleFinish && m_sync->m_isFinished)
+        if (counter != nullptr)
+        {
+            oss << "counter=" << +counter->load(std::memory_order_relaxed) << ", ";
+        }
+        oss << "timeout=" << m_syncTimeoutUs << "us. ";
+        if (m_handleFinish && m_sync->m_isFinished.load(std::memory_order_acquire))
         {
             oss << "The peer has already marked the shared session as finished. ";
-        }
-        else if (m_syncTimeoutUs > 0)
-        {
-            oss << "Timed out after " << m_syncTimeoutUs << " us. ";
-        }
-        else
-        {
-            oss << "The wait was aborted. ";
         }
         oss << "Current states: C++=" << StateName(GetPeerState(Ns3AiMsgPeer::Cpp))
             << ", Python=" << StateName(GetPeerState(Ns3AiMsgPeer::Py)) << ". "
@@ -1144,19 +1257,18 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         throw std::runtime_error(oss.str());
     };
 
-    static void Backoff(uint32_t attempts)
+    /**
+     * sem_post 包装：调用 exchange(1) 后检查旧值，若 >=1 输出诊断。
+     * 用于检测重复释放协议 bug，避免静默丢失计数信号量语义。
+     */
+    static void SemPostWithDiag(std::atomic<uint8_t>* counter, const char* name)
     {
-        if (attempts < 64)
+        const uint8_t old = Ns3AiSemaphore::sem_post(counter);
+        if (old >= 1)
         {
-            std::this_thread::yield();
-            return;
+            std::cerr << "ns3-ai [" << name << "] duplicate sem_post: old=" << +old
+                      << " (protocol bug)" << std::endl;
         }
-        if (attempts < 1024)
-        {
-            std::this_thread::sleep_for(std::chrono::microseconds(50));
-            return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     };
 
     std::unique_ptr<boost::interprocess::managed_shared_memory> m_segment;

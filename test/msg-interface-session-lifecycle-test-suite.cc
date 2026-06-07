@@ -13,6 +13,7 @@
 
 #include <unistd.h>
 
+#include <exception>
 #include <sstream>
 #include <string>
 
@@ -529,6 +530,132 @@ class SessionUserInterruptedCloseIdempotentTestCase : public TestCase
     }
 };
 
+/**
+ * \brief TryCppRecvBegin 在对端标记 finish 后返回 false 且不标记 Timeout。
+ *
+ * TryCppRecvBegin 等待 m_py2cppFullCount（初始 0）时会检测 abort_flag。
+ * 对端调用 CppSetFinished 后，TryCppRecvBegin 应返回 false（Aborted）
+ * 而非标记 Timeout。
+ */
+class SessionTryBeginAbortNotTimeoutTestCase : public TestCase
+{
+  public:
+    SessionTryBeginAbortNotTimeoutTestCase()
+        : TestCase("TryCppRecvBegin returns false on finish without marking Timeout")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("try-abort"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000000, names.m_headerName.c_str());
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000000, names.m_headerName.c_str());
+
+        // 对端标记 finished，m_isFinished=true 且 m_cppState=Finished
+        creator.CppSetFinished();
+
+        // TryCppRecvBegin:
+        // TransitionPeer(Cpp, Ready, Receiving) 失败（m_cppState=Finished）
+        // → 返回 false，不进入 WaitForSync
+        // 这验证：当 peer state 因 finish 改变后，Try*Begin 不会假成功
+        const bool result = opener.TryCppRecvBegin();
+        NS_TEST_EXPECT_MSG_EQ(result, false,
+                              "TryCppRecvBegin returns false when peer state is Finished");
+
+        // 不应标记为 Timeout
+        NS_TEST_EXPECT_MSG_NE(opener.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Aborted by finish must not be recorded as Timeout");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::None,
+                              "Finishing peer has no error");
+
+        // 验证 opener 没有进入 Error 状态
+        NS_TEST_EXPECT_MSG_NE(opener.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "Opener session is not Error after finish abort");
+    }
+};
+
+/**
+ * \brief 超时异常消息包含 operation、wait target、counter 值、timeout us、对端状态。
+ */
+class SessionTimeoutDiagnosticTextTestCase : public TestCase
+{
+  public:
+    SessionTimeoutDiagnosticTextTestCase()
+        : TestCase("timeout exception includes diagnostic fields")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("timeout-diag"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str());
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str());
+
+        bool caughtTimeout = false;
+        bool hasOperation = false;
+        bool hasWaitTarget = false;
+        bool hasCounter = false;
+        bool hasTimeout = false;
+        bool hasCppState = false;
+        bool hasPyState = false;
+        try
+        {
+            // 发送端没写数据，接收端 CppRecvBegin 应超时
+            creator.CppRecvBegin();
+        }
+        catch (const std::runtime_error& e)
+        {
+            caughtTimeout = true;
+            const std::string msg = e.what();
+
+            hasOperation = msg.find("CppRecvBegin") != std::string::npos;
+            hasWaitTarget = msg.find("py2cpp full slot") != std::string::npos;
+            hasCounter = msg.find("counter=") != std::string::npos;
+            hasTimeout = msg.find("timeout=1000") != std::string::npos;
+            hasCppState = msg.find("C++=") != std::string::npos;
+            hasPyState = msg.find("Python=") != std::string::npos;
+        }
+
+        NS_TEST_EXPECT_MSG_EQ(hasOperation, true, "message contains the operation name");
+        NS_TEST_EXPECT_MSG_EQ(hasWaitTarget, true, "message contains the wait target name");
+        NS_TEST_EXPECT_MSG_EQ(hasCounter, true, "message contains counter value");
+        NS_TEST_EXPECT_MSG_EQ(hasTimeout, true, "message contains timeout value in us");
+        NS_TEST_EXPECT_MSG_EQ(hasCppState, true, "message contains C++ peer state");
+        NS_TEST_EXPECT_MSG_EQ(hasPyState, true, "message contains Python peer state");
+
+        NS_TEST_EXPECT_MSG_EQ(caughtTimeout, true,
+                              "CppRecvBegin throws on timeout");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Timeout is recorded as Timeout error");
+    }
+};
+
 class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
 {
   public:
@@ -543,6 +670,8 @@ class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
         AddTestCase(new SessionStaleGenerationErrorTestCase, TestCase::QUICK);
         AddTestCase(new SessionProtocolMismatchErrorTestCase, TestCase::QUICK);
         AddTestCase(new SessionUserInterruptedCloseIdempotentTestCase, TestCase::QUICK);
+        AddTestCase(new SessionTryBeginAbortNotTimeoutTestCase, TestCase::QUICK);
+        AddTestCase(new SessionTimeoutDiagnosticTextTestCase, TestCase::QUICK);
     }
 };
 

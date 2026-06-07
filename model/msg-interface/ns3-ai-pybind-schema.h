@@ -59,31 +59,33 @@ BindNs3AiMsgSchemaTypes(py::module_& module)
 
     py::class_<Ns3AiMsgProtocolHeader>(module, "Ns3AiMsgProtocolHeader")
         .def_property_readonly("magic", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint32_t>(header.m_magic);
+            return static_cast<uint32_t>(header.m_magic.load(std::memory_order_acquire));
         })
         .def_property_readonly("abi_version", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint16_t>(header.m_abiVersion);
+            return static_cast<uint16_t>(header.m_abiVersion.load(std::memory_order_acquire));
         })
         .def_property_readonly("header_size", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint16_t>(header.m_headerSize);
+            return static_cast<uint16_t>(header.m_headerSize.load(std::memory_order_acquire));
         })
         .def_property_readonly("cpp2py_payload_size", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint32_t>(header.m_cpp2pyPayloadSize);
+            return static_cast<uint32_t>(header.m_cpp2pyPayloadSize.load(std::memory_order_acquire));
         })
         .def_property_readonly("py2cpp_payload_size", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint32_t>(header.m_py2cppPayloadSize);
+            return static_cast<uint32_t>(header.m_py2cppPayloadSize.load(std::memory_order_acquire));
         })
         .def_property_readonly("cpp2py_schema_version", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint32_t>(header.m_cpp2pySchemaVersion);
+            return static_cast<uint32_t>(
+                header.m_cpp2pySchemaVersion.load(std::memory_order_acquire));
         })
         .def_property_readonly("py2cpp_schema_version", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint32_t>(header.m_py2cppSchemaVersion);
+            return static_cast<uint32_t>(
+                header.m_py2cppSchemaVersion.load(std::memory_order_acquire));
         })
         .def_property_readonly("cpp2py_schema_hash", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint64_t>(header.m_cpp2pySchemaHash);
+            return header.m_cpp2pySchemaHash.load(std::memory_order_acquire);
         })
         .def_property_readonly("py2cpp_schema_hash", [](const Ns3AiMsgProtocolHeader& header) {
-            return static_cast<uint64_t>(header.m_py2cppSchemaHash);
+            return header.m_py2cppSchemaHash.load(std::memory_order_acquire);
         });
 }
 
