@@ -74,7 +74,7 @@ PYBIND11_MODULE(ns3ai_ltecqi_py, m)
              py::arg("py2cpp_schema_hash") = 0,
              py::arg("cpp2py_schema_version") = 0,
              py::arg("py2cpp_schema_version") = 0,
-py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
+             py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
                  return static_cast<uint8_t>(interface.GetSessionState());
