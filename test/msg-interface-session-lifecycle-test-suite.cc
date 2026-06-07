@@ -76,7 +76,7 @@ class SessionReadyHandshakeTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Init,
@@ -92,7 +92,7 @@ class SessionReadyHandshakeTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Ready,
@@ -135,7 +135,7 @@ class SessionCloseHandshakeTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
@@ -146,7 +146,7 @@ class SessionCloseHandshakeTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         // 通过一次数据交换将会话状态推进到 RUNNING
         creator.CppSendBegin();
@@ -206,7 +206,7 @@ class SessionTimeoutErrorTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
@@ -217,7 +217,7 @@ class SessionTimeoutErrorTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         NS_TEST_EXPECT_MSG_EQ(creator.TryCppRecvBegin(),
                               false,
@@ -258,7 +258,7 @@ class SessionClosingBlocksDataExchangeTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
@@ -269,7 +269,7 @@ class SessionClosingBlocksDataExchangeTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
 
@@ -332,7 +332,7 @@ class SessionPeerDeathErrorTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
@@ -343,7 +343,7 @@ class SessionPeerDeathErrorTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         opener.ReportPeerDeath(Ns3AiMsgPeer::Cpp);
 
@@ -383,7 +383,7 @@ class SessionStaleGenerationErrorTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
@@ -394,7 +394,7 @@ class SessionStaleGenerationErrorTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         const auto staleGeneration = opener.GetGenerationId() + 1;
 
@@ -439,7 +439,10 @@ class SessionProtocolMismatchErrorTestCase : public TestCase
             1000,
             names.m_headerName.c_str(),
             11,
-            22);
+            22,
+            1,
+            1,
+            Ns3AiSchemaValidationMode::Strict);
 
         bool rejected = false;
         try
@@ -456,7 +459,10 @@ class SessionProtocolMismatchErrorTestCase : public TestCase
                 1000,
                 names.m_headerName.c_str(),
                 99,
-                22);
+                22,
+                1,
+                1,
+                Ns3AiSchemaValidationMode::Strict);
         }
         catch (const std::runtime_error&)
         {
@@ -500,7 +506,7 @@ class SessionUserInterruptedCloseIdempotentTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
@@ -511,7 +517,7 @@ class SessionUserInterruptedCloseIdempotentTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000,
-            names.m_headerName.c_str());
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         opener.RequestClose(Ns3AiMsgPeer::Py, Ns3AiMsgCloseReason::UserInterrupted);
         creator.AcknowledgeClose(Ns3AiMsgPeer::Cpp);
@@ -555,12 +561,12 @@ class SessionTryBeginAbortNotTimeoutTestCase : public TestCase
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
-            1000000, names.m_headerName.c_str());
+            1000000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
-            1000000, names.m_headerName.c_str());
+            1000000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         // 对端标记 finished，m_isFinished=true 且 m_cppState=Finished
         creator.CppSetFinished();
@@ -609,12 +615,12 @@ class SessionTimeoutDiagnosticTextTestCase : public TestCase
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
-            1000, names.m_headerName.c_str());
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
         Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
-            1000, names.m_headerName.c_str());
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         bool caughtTimeout = false;
         bool hasOperation = false;

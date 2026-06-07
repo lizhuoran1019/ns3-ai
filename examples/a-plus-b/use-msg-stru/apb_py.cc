@@ -31,6 +31,11 @@ namespace py = pybind11;
 PYBIND11_MODULE(ns3ai_apb_py_stru, m)
 {
     ns3::BindNs3AiErrorTypes(m);
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+        .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
+        .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
+        .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
+        .export_values();
     py::class_<EnvStruct>(m, "PyEnvStruct")
         .def(py::init<>())
         .def_readwrite("a", &EnvStruct::env_a)
@@ -54,7 +59,7 @@ PYBIND11_MODULE(ns3ai_apb_py_stru, m)
                       uint64_t,
                       uint64_t,
                       uint32_t,
-                      uint32_t>(),
+                      uint32_t, ns3::Ns3AiSchemaValidationMode>(),
              py::arg("is_memory_creator"),
              py::arg("use_vector"),
              py::arg("handle_finish"),
@@ -68,7 +73,8 @@ PYBIND11_MODULE(ns3ai_apb_py_stru, m)
              py::arg("cpp2py_schema_hash") = 0,
              py::arg("py2cpp_schema_hash") = 0,
              py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0)
+             py::arg("py2cpp_schema_version") = 0,
+             py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
                  return static_cast<uint8_t>(interface.GetSessionState());

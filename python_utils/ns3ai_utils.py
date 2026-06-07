@@ -23,6 +23,7 @@ import subprocess
 import psutil
 import sys
 import time
+import warnings
 from enum import IntEnum
 
 
@@ -77,9 +78,23 @@ class Ns3AiSessionTimeoutError(TimeoutError):
     pass
 
 
+class SchemaValidationMode(IntEnum):
+    Strict = 0
+    Compatibility = 1
+    Disabled = 2
+
+
+_SCHEMA_VALIDATION_MODE_NAMES = {
+    "strict": SchemaValidationMode.Strict,
+    "compatibility": SchemaValidationMode.Compatibility,
+    "disabled": SchemaValidationMode.Disabled,
+}
+
+
 class Ns3AiMsgInterface:
-    def __init__(self, raw_interface):
+    def __init__(self, raw_interface, ns3ai_error_type=None):
         self._raw_interface = raw_interface
+        self._ns3ai_error_type = ns3ai_error_type
 
     @classmethod
     def create(cls, msg_module, **kwargs):
@@ -105,13 +120,38 @@ class Ns3AiMsgInterface:
                          cpp2py_schema_hash=None,
                          py2cpp_schema_hash=None,
                          cpp2py_schema_version=None,
-                         py2cpp_schema_version=None):
+                         py2cpp_schema_version=None,
+                         schema_validation_mode="strict"):
         if sync_timeout_us is None:
             sync_timeout_us = getattr(msg_module, 'default_sync_timeout_us', DEFAULT_SYNC_TIMEOUT_US)
-        cpp2py_schema_hash = _module_default(cpp2py_schema_hash, msg_module, 'schema_hash')
-        py2cpp_schema_hash = _module_default(py2cpp_schema_hash, msg_module, 'schema_hash')
-        cpp2py_schema_version = _module_default(cpp2py_schema_version, msg_module, 'schema_version')
-        py2cpp_schema_version = _module_default(py2cpp_schema_version, msg_module, 'schema_version')
+        cpp2py_schema_hash = _resolve_metadata(cpp2py_schema_hash, msg_module,
+                                                'cpp2py_schema_hash', 'schema_hash')
+        py2cpp_schema_hash = _resolve_metadata(py2cpp_schema_hash, msg_module,
+                                                'py2cpp_schema_hash', 'schema_hash')
+        cpp2py_schema_version = _resolve_metadata(cpp2py_schema_version, msg_module,
+                                                   'cpp2py_schema_version', 'schema_version')
+        py2cpp_schema_version = _resolve_metadata(py2cpp_schema_version, msg_module,
+                                                   'py2cpp_schema_version', 'schema_version')
+        mode = _parse_schema_validation_mode(schema_validation_mode)
+        if mode == SchemaValidationMode.Compatibility:
+            warnings.warn(
+                "ns3ai_utils: schema_validation_mode='compatibility' is active. "
+                "Missing schema metadata will produce warnings instead of errors. "
+                "Set schema_validation_mode='strict' after regenerating bindings.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        elif mode == SchemaValidationMode.Disabled:
+            warnings.warn(
+                "ns3ai_utils: schema validation is disabled. "
+                "Layout drift may corrupt shared memory. "
+                "Set schema_validation_mode='strict' when bindings are ready.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+        mode_enum = (getattr(msg_module, 'Ns3AiSchemaValidationMode')(int(mode))
+                     if hasattr(msg_module, 'Ns3AiSchemaValidationMode')
+                     else int(mode))
         return cls(msg_module.Ns3AiMsgInterfaceImpl(
             is_memory_creator,
             use_vector,
@@ -127,7 +167,9 @@ class Ns3AiMsgInterface:
             py2cpp_schema_hash,
             cpp2py_schema_version,
             py2cpp_schema_version,
-        ))
+            mode_enum,
+        ),
+                   ns3ai_error_type=getattr(msg_module, 'Ns3AiError', None))
 
     @property
     def raw_interface(self):
@@ -187,7 +229,9 @@ class Ns3AiMsgInterface:
     def _call_raw(self, method_name):
         try:
             return getattr(self._raw_interface, method_name)()
-        except Exception:
+        except Exception as exc:
+            if self._ns3ai_error_type is not None and isinstance(exc, self._ns3ai_error_type):
+                raise
             if self.session_state == SessionState.Error:
                 raise Ns3AiSessionError(self.error_reason, self.last_error_peer)
             raise
@@ -261,6 +305,38 @@ def _module_default(value, module, attr, fallback=0):
     return value
 
 
+def _resolve_metadata(value, module, primary_attr, deprecated_attr):
+    """解析 metadata 值：explicit arg > module.primary_attr > module.deprecated_attr (fallback with DeprecationWarning)"""
+    if value is not None:
+        return value
+    if hasattr(module, primary_attr):
+        return getattr(module, primary_attr)
+    if hasattr(module, deprecated_attr):
+        module_name = getattr(module, '__name__', type(module).__name__)
+        warnings.warn(
+            "ns3ai_utils: module '{}' uses deprecated '{}' instead of '{}'. "
+            "Update your binding to expose '{}'.".format(
+                module_name, deprecated_attr, primary_attr, primary_attr
+            ),
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return getattr(module, deprecated_attr)
+    return 0
+
+
+def _parse_schema_validation_mode(mode):
+    if isinstance(mode, SchemaValidationMode):
+        return mode
+    name = mode.lower()
+    if name not in _SCHEMA_VALIDATION_MODE_NAMES:
+        raise ValueError(
+            "ns3ai_utils: schema_validation_mode must be 'strict', "
+            "'compatibility', or 'disabled', got '{}'".format(mode)
+        )
+    return _SCHEMA_VALIDATION_MODE_NAMES[name]
+
+
 def _resolve_ns3_path(ns3_path):
     return os.path.abspath(ns3_path)
 
@@ -327,6 +403,7 @@ class Experiment:
                  py2cppSchemaHash=None,
                  cpp2pySchemaVersion=None,
                  py2cppSchemaVersion=None,
+                 schemaValidationMode="strict",
                  shmPrefix=None,
                  env=None):
         self.targetName = targetName
@@ -373,6 +450,7 @@ class Experiment:
             py2cpp_schema_hash=self.py2cppSchemaHash,
             cpp2py_schema_version=self.cpp2pySchemaVersion,
             py2cpp_schema_version=self.py2cppSchemaVersion,
+            schema_validation_mode=schemaValidationMode,
         )
         if self.useVector:
             if self.vectorSize is None:
@@ -450,6 +528,7 @@ class ParallelExperiment:
                  py2cppSchemaHash=None,
                  cpp2pySchemaVersion=None,
                  py2cppSchemaVersion=None,
+                 schemaValidationMode="strict",
                  shmPrefixBase='ns3ai-env',
                  env=None):
         if count <= 0:
@@ -468,6 +547,7 @@ class ParallelExperiment:
                            py2cppSchemaHash=py2cppSchemaHash,
                            cpp2pySchemaVersion=cpp2pySchemaVersion,
                            py2cppSchemaVersion=py2cppSchemaVersion,
+                           schemaValidationMode=schemaValidationMode,
                            shmPrefix=prefix,
                            env=env)
             )
@@ -506,6 +586,7 @@ __all__ = [
     'Ns3AiSessionTimeoutError',
     'ParallelExperiment',
     'Peer',
+    'SchemaValidationMode',
     'SessionState',
     'make_shm_names',
     'DEFAULT_SYNC_TIMEOUT_US',
