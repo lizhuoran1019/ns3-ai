@@ -34,6 +34,7 @@
 #include <ns3/config.h>
 #include <ns3/log.h>
 #include <ns3/simulator.h>
+#include <ns3/ns3-ai-errors.h>
 
 #include <cassert>
 #include <limits>
@@ -61,14 +62,14 @@ SerializeGymMessageOrThrow(const google::protobuf::MessageLite& message,
         oss << "ns3-ai Gym " << messageName << " message is " << messageSize
             << " bytes, which exceeds the configured shared-memory buffer of " << MSG_BUFFER_SIZE
             << " bytes. Increase NS3AI_GYM_MSG_BUFFER_SIZE when configuring ns-3.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
     if (messageSize > std::numeric_limits<uint32_t>::max())
     {
         std::ostringstream oss;
         oss << "ns3-ai Gym " << messageName
             << " message is too large to encode in the message header.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
 
     target->size = static_cast<uint32_t>(messageSize);
@@ -76,7 +77,7 @@ SerializeGymMessageOrThrow(const google::protobuf::MessageLite& message,
     {
         std::ostringstream oss;
         oss << "ns3-ai Gym failed to serialize " << messageName << " message.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
 }
 
@@ -91,13 +92,13 @@ ParseGymMessageOrThrow(google::protobuf::MessageLite* message,
         oss << "ns3-ai Gym received " << messageName << " message with declared size "
             << source->size << " bytes, which exceeds the configured shared-memory buffer of "
             << MSG_BUFFER_SIZE << " bytes.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
     if (!message->ParseFromArray(source->buffer, static_cast<int>(source->size)))
     {
         std::ostringstream oss;
         oss << "ns3-ai Gym failed to parse " << messageName << " message.";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
 }
 
@@ -109,7 +110,7 @@ ValidateSequenceOrThrow(uint64_t actualSequence, uint64_t expectedSequence, cons
         std::ostringstream oss;
         oss << "ns3-ai Gym " << messageName << " sequence mismatch: expected " << expectedSequence
             << ", got " << actualSequence << ".";
-        throw std::runtime_error(oss.str());
+        throw Ns3AiProtocolError(oss.str());
     }
 }
 
@@ -198,7 +199,12 @@ void
 OpenGymInterface::SetSharedMemoryPrefix(const std::string& sharedMemoryPrefix)
 {
     NS_LOG_FUNCTION(this << sharedMemoryPrefix);
-    assert(!m_msgInterface && "shared-memory names must be set before the interface is opened");
+    if (m_msgInterface)
+    {
+        throw Ns3AiRuntimeError(
+            "ns3-ai Gym interface shared-memory prefix must be set "
+            "before the message interface is opened");
+    }
     m_msgNames = Ns3AiMsgInterface::MakeNames(sharedMemoryPrefix);
 }
 
@@ -209,7 +215,12 @@ OpenGymInterface::SetSharedMemoryNames(std::string segmentName,
                                        std::string lockableName)
 {
     NS_LOG_FUNCTION(this << segmentName << cpp2pyMsgName << py2cppMsgName << lockableName);
-    assert(!m_msgInterface && "shared-memory names must be set before the interface is opened");
+    if (m_msgInterface)
+    {
+        throw Ns3AiRuntimeError(
+            "ns3-ai Gym interface shared-memory names must be set "
+            "before the message interface is opened");
+    }
     m_msgNames = Ns3AiMsgInterfaceNames{segmentName, cpp2pyMsgName, py2cppMsgName, lockableName, "My Header"};
 }
 
@@ -217,7 +228,12 @@ void
 OpenGymInterface::SetSharedMemorySize(uint32_t size)
 {
     NS_LOG_FUNCTION(this << size);
-    assert(!m_msgInterface && "shared-memory size must be set before the interface is opened");
+    if (m_msgInterface)
+    {
+        throw Ns3AiRuntimeError(
+            "ns3-ai Gym interface shared-memory size must be set "
+            "before the message interface is opened");
+    }
     m_memorySize = size;
 }
 
@@ -302,7 +318,13 @@ OpenGymInterface::SendCurrentState()
     {
         return;
     }
-    assert(!m_stateAwaitingAction && "previous Gym state has not received an action yet");
+    if (m_stateAwaitingAction)
+    {
+        throw Ns3AiProtocolError(
+            "ns3-ai Gym interface protocol violation in SendCurrentState: "
+            "previous Gym state is still awaiting an action. "
+            "Call ReceiveActions() before sending the next state.");
+    }
 
     Ptr<OpenGymDataContainer> obsDataContainer = GetObservation();
     float reward = GetReward();

@@ -10,9 +10,12 @@
 
 #include "ns3-ai-gym-interface.h"
 
-#include <ns3/assert.h>
 #include <ns3/log.h>
+#include <ns3/ns3-ai-errors.h>
 #include <ns3/object.h>
+
+#include <sstream>
+#include <stdexcept>
 
 namespace ns3
 {
@@ -25,7 +28,10 @@ OpenGymVectorEnv::OpenGymVectorEnv(uint32_t numEnvs)
       m_activeEnvIndex(0)
 {
     NS_LOG_FUNCTION(this << numEnvs);
-    NS_ASSERT_MSG(numEnvs > 0, "OpenGymVectorEnv requires at least one environment");
+    if (numEnvs == 0)
+    {
+        throw std::invalid_argument("OpenGymVectorEnv requires at least one environment");
+    }
     m_interfaces.resize(m_numEnvs);
 }
 
@@ -51,9 +57,16 @@ void
 OpenGymVectorEnv::SetNumEnvs(uint32_t numEnvs)
 {
     NS_LOG_FUNCTION(this << numEnvs);
-    NS_ASSERT_MSG(numEnvs > 0, "OpenGymVectorEnv requires at least one environment");
-    NS_ASSERT_MSG(m_interfaces.empty() || m_interfaces.size() == m_numEnvs,
-                  "unexpected vector interface state");
+    if (numEnvs == 0)
+    {
+        throw std::invalid_argument("OpenGymVectorEnv requires at least one environment");
+    }
+    if (!m_interfaces.empty() && m_interfaces.size() != m_numEnvs)
+    {
+        throw Ns3AiRuntimeError(
+            "ns3-ai OpenGymVectorEnv unexpected vector interface state in SetNumEnvs: "
+            "interfaces size does not match numEnvs");
+    }
     m_numEnvs = numEnvs;
     m_interfaces.clear();
     m_interfaces.resize(m_numEnvs);
@@ -75,8 +88,13 @@ void
 OpenGymVectorEnv::SetOpenGymInterfaces(const std::vector<Ptr<OpenGymInterface>>& interfaces)
 {
     NS_LOG_FUNCTION(this << interfaces.size());
-    NS_ASSERT_MSG(interfaces.size() == m_numEnvs,
-                  "number of OpenGymInterface instances must match numEnvs");
+    if (interfaces.size() != m_numEnvs)
+    {
+        std::ostringstream oss;
+        oss << "OpenGymVectorEnv number of provided OpenGymInterface instances (" << interfaces.size()
+            << ") does not match numEnvs (" << m_numEnvs << ")";
+        throw std::invalid_argument(oss.str());
+    }
     for (uint32_t envIndex = 0; envIndex < m_numEnvs; ++envIndex)
     {
         BindInterface(envIndex, interfaces[envIndex]);
@@ -101,7 +119,12 @@ OpenGymVectorEnv::Initialize(uint32_t envIndex)
 {
     NS_LOG_FUNCTION(this << envIndex);
     ValidateEnvIndex(envIndex);
-    NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
+    if (!m_interfaces[envIndex])
+    {
+        std::ostringstream oss;
+        oss << "OpenGymVectorEnv lane " << envIndex << " is not bound to an interface";
+        throw Ns3AiRuntimeError(oss.str());
+    }
     m_activeEnvIndex = envIndex;
     m_interfaces[envIndex]->SetGetActionSpaceCb(MakeCallback(&OpenGymEnv::GetActionSpace, this));
     m_interfaces[envIndex]->SetGetObservationSpaceCb(MakeCallback(&OpenGymEnv::GetObservationSpace, this));
@@ -123,7 +146,12 @@ OpenGymVectorEnv::Notify(uint32_t envIndex)
 {
     NS_LOG_FUNCTION(this << envIndex);
     ValidateEnvIndex(envIndex);
-    NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
+    if (!m_interfaces[envIndex])
+    {
+        std::ostringstream oss;
+        oss << "OpenGymVectorEnv lane " << envIndex << " is not bound to an interface";
+        throw Ns3AiRuntimeError(oss.str());
+    }
     m_activeEnvIndex = envIndex;
     m_interfaces[envIndex]->SetGetGameOverCb(MakeCallback(&OpenGymEnv::GetGameOver, this));
     m_interfaces[envIndex]->SetGetObservationCb(MakeCallback(&OpenGymEnv::GetObservation, this));
@@ -141,7 +169,12 @@ OpenGymVectorEnv::NotifyAll()
     for (uint32_t envIndex = 0; envIndex < m_numEnvs; ++envIndex)
     {
         ValidateEnvIndex(envIndex);
-        NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
+        if (!m_interfaces[envIndex])
+        {
+            std::ostringstream oss;
+            oss << "OpenGymVectorEnv lane " << envIndex << " is not bound to an interface";
+            throw Ns3AiRuntimeError(oss.str());
+        }
         m_activeEnvIndex = envIndex;
         m_interfaces[envIndex]->SetGetGameOverCb(MakeCallback(&OpenGymEnv::GetGameOver, this));
         m_interfaces[envIndex]->SetGetObservationCb(MakeCallback(&OpenGymEnv::GetObservation, this));
@@ -162,7 +195,12 @@ OpenGymVectorEnv::NotifySimulationEnd(uint32_t envIndex)
 {
     NS_LOG_FUNCTION(this << envIndex);
     ValidateEnvIndex(envIndex);
-    NS_ASSERT_MSG(m_interfaces[envIndex], "OpenGymVectorEnv lane is not bound to an interface");
+    if (!m_interfaces[envIndex])
+    {
+        std::ostringstream oss;
+        oss << "OpenGymVectorEnv lane " << envIndex << " is not bound to an interface";
+        throw Ns3AiRuntimeError(oss.str());
+    }
     m_interfaces[envIndex]->NotifySimulationEnd();
 }
 
@@ -221,14 +259,24 @@ OpenGymVectorEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 void
 OpenGymVectorEnv::ValidateEnvIndex(uint32_t envIndex) const
 {
-    NS_ASSERT_MSG(envIndex < m_numEnvs, "vector environment index out of range");
+    if (envIndex >= m_numEnvs)
+    {
+        std::ostringstream oss;
+        oss << "OpenGymVectorEnv index " << envIndex << " out of range [0, " << m_numEnvs << ")";
+        throw std::out_of_range(oss.str());
+    }
 }
 
 void
 OpenGymVectorEnv::BindInterface(uint32_t envIndex, Ptr<OpenGymInterface> interface)
 {
     ValidateEnvIndex(envIndex);
-    NS_ASSERT_MSG(interface, "cannot bind a null OpenGymInterface");
+    if (!interface)
+    {
+        std::ostringstream oss;
+        oss << "OpenGymVectorEnv cannot bind a null OpenGymInterface at index " << envIndex;
+        throw std::invalid_argument(oss.str());
+    }
     m_interfaces[envIndex] = interface;
 }
 
