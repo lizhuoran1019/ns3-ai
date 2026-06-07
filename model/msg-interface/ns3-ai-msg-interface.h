@@ -454,8 +454,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
             m_sync = m_segment->construct<Ns3AiMsgSync>(lockable_name)();
             m_header = m_segment->construct<Ns3AiMsgProtocolHeader>(header_name)();
-            // 先初始化协议头，再发布 sync state。m_sessionState = Init 的 release store
-            // 作为门闩，确保所有 protocol header 写入对 opener 可见。
+            // 先初始化协议头（m_magic 最后 release-store 作为发布门闩），
+            // 再初始化同步状态。opener 在 ValidateProtocolHeader 中
+            // acquire 等待 m_magic != 0 后才读取 header 字段。
             InitializeProtocolHeader();
             InitializeSyncState();
         }
@@ -929,7 +930,6 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         SetPeerState(Ns3AiMsgPeer::Py, Ns3AiMsgPeerState::Ready);
         m_sync->m_lastErrorPeer.store(0, std::memory_order_release);
         m_sync->m_lastErrorCode.store(0, std::memory_order_release);
-        // m_sessionState 的 release store 作为门闩：确保以上所有写入对 opener 可见
     };
 
     bool TryTransitionPeer(Ns3AiMsgPeer peer,
@@ -1095,6 +1095,42 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         m_header->m_magic.store(NS3_AI_MSG_HEADER_MAGIC, std::memory_order_release);
     };
 
+    /**
+     * 等待 creator 完成 InitializeProtocolHeader 的发布门闩。
+     *
+     * m_magic 默认 0，creator 在所有 header 字段写入完成后最后一步
+     * release-store 正确值。opener 在此 acquire 等待 m_magic != 0，
+     * 确保后续读取所有 header 字段时已看到完成状态。
+     *
+     * 若 m_syncTimeoutUs > 0，超时后标记 Error 并抛异常。
+     * 若 m_syncTimeoutUs == 0，无限期等待。
+     */
+    void WaitForHeaderPublished() const
+    {
+        const auto start = std::chrono::steady_clock::now();
+        uint32_t attempts = 0;
+
+        while (m_header->m_magic.load(std::memory_order_acquire) == 0)
+        {
+            if (m_syncTimeoutUs > 0)
+            {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - start);
+                if (static_cast<uint64_t>(elapsed.count()) >= m_syncTimeoutUs)
+                {
+                    MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::Timeout);
+                    std::ostringstream oss;
+                    oss << "ns3-ai message interface timed out waiting for protocol header "
+                           "publication after "
+                        << m_syncTimeoutUs << " us. The creator may have crashed before "
+                                               "initializing the shared-memory protocol header.";
+                    throw std::runtime_error(oss.str());
+                }
+            }
+            Ns3AiSemaphore::Backoff(attempts++);
+        }
+    };
+
     void ValidateProtocolHeader() const
     {
         if (m_header == nullptr)
@@ -1104,17 +1140,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             throw std::runtime_error(oss.str());
         }
 
-        // 等待 creator 完成 InitializeProtocolHeader 的发布门闩：m_magic 默认 0，
-        // creator 在所有 header 字段写入完成后的最后一步 release-store 正确值。
-        {
-            // 等待 creator 完成 InitializeProtocolHeader 的发布门闩：m_magic 默认 0，
-            // creator 在所有 header 字段写入完成后的最后一步 release-store 正确值。
-            uint32_t attempts = 0;
-            while (m_header->m_magic.load(std::memory_order_acquire) == 0)
-            {
-                Ns3AiSemaphore::Backoff(attempts++);
-            }
-        }
+        WaitForHeaderPublished();
 
         if (m_header->m_magic.load(std::memory_order_acquire) != NS3_AI_MSG_HEADER_MAGIC ||
             m_header->m_abiVersion.load(std::memory_order_acquire) != NS3_AI_MSG_ABI_VERSION ||
