@@ -23,6 +23,7 @@ import subprocess
 import psutil
 import sys
 import time
+import warnings
 from enum import IntEnum
 
 
@@ -123,11 +124,31 @@ class Ns3AiMsgInterface:
                          schema_validation_mode="strict"):
         if sync_timeout_us is None:
             sync_timeout_us = getattr(msg_module, 'default_sync_timeout_us', DEFAULT_SYNC_TIMEOUT_US)
-        cpp2py_schema_hash = _module_default(cpp2py_schema_hash, msg_module, 'schema_hash')
-        py2cpp_schema_hash = _module_default(py2cpp_schema_hash, msg_module, 'schema_hash')
-        cpp2py_schema_version = _module_default(cpp2py_schema_version, msg_module, 'schema_version')
-        py2cpp_schema_version = _module_default(py2cpp_schema_version, msg_module, 'schema_version')
+        cpp2py_schema_hash = _resolve_metadata(cpp2py_schema_hash, msg_module,
+                                                'cpp2py_schema_hash', 'schema_hash')
+        py2cpp_schema_hash = _resolve_metadata(py2cpp_schema_hash, msg_module,
+                                                'py2cpp_schema_hash', 'schema_hash')
+        cpp2py_schema_version = _resolve_metadata(cpp2py_schema_version, msg_module,
+                                                   'cpp2py_schema_version', 'schema_version')
+        py2cpp_schema_version = _resolve_metadata(py2cpp_schema_version, msg_module,
+                                                   'py2cpp_schema_version', 'schema_version')
         mode = _parse_schema_validation_mode(schema_validation_mode)
+        if mode == SchemaValidationMode.Compatibility:
+            warnings.warn(
+                "ns3ai_utils: schema_validation_mode='compatibility' is active. "
+                "Missing schema metadata will produce warnings instead of errors. "
+                "Set schema_validation_mode='strict' after regenerating bindings.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        elif mode == SchemaValidationMode.Disabled:
+            warnings.warn(
+                "ns3ai_utils: schema validation is disabled. "
+                "Layout drift may corrupt shared memory. "
+                "Set schema_validation_mode='strict' when bindings are ready.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
         mode_enum = (getattr(msg_module, 'Ns3AiSchemaValidationMode')(int(mode))
                      if hasattr(msg_module, 'Ns3AiSchemaValidationMode')
                      else int(mode))
@@ -282,6 +303,26 @@ def _module_default(value, module, attr, fallback=0):
     if value is None:
         return getattr(module, attr, fallback)
     return value
+
+
+def _resolve_metadata(value, module, primary_attr, deprecated_attr):
+    """解析 metadata 值：explicit arg > module.primary_attr > module.deprecated_attr (fallback with DeprecationWarning)"""
+    if value is not None:
+        return value
+    if hasattr(module, primary_attr):
+        return getattr(module, primary_attr)
+    if hasattr(module, deprecated_attr):
+        module_name = getattr(module, '__name__', type(module).__name__)
+        warnings.warn(
+            "ns3ai_utils: module '{}' uses deprecated '{}' instead of '{}'. "
+            "Update your binding to expose '{}'.".format(
+                module_name, deprecated_attr, primary_attr, primary_attr
+            ),
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return getattr(module, deprecated_attr)
+    return 0
 
 
 def _parse_schema_validation_mode(mode):

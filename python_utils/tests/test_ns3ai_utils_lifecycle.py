@@ -99,6 +99,10 @@ class FailingMessageInterface(FakeMessageInterface):
 
 class FakeMsgModule:
     default_sync_timeout_us = 0
+    cpp2py_schema_hash = 0
+    py2cpp_schema_hash = 0
+    cpp2py_schema_version = 0
+    py2cpp_schema_version = 0
     schema_hash = 0
     schema_version = 0
     Ns3AiError = RuntimeError
@@ -110,6 +114,10 @@ class FakeMsgModule:
     def Ns3AiMsgInterfaceImpl(self, *args):
         self.constructor_args = args
         return self.raw_interface
+
+    @property
+    def __name__(self):
+        return 'FakeMsgModule'
 
 
 class FakeProcess:
@@ -302,8 +310,8 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
                 schema_validation_mode="invalid_mode",
             )
 
-    def test_call_raw_passes_through_ns3ai_error(self):
-        class FailingWithNs3AiError:
+    def test_call_raw_passes_through_ns3ai_schema_error_message(self):
+        class FailingWithNs3AiSchemaError:
             def GetSessionState(self):
                 return 5
             def GetErrorReason(self):
@@ -311,15 +319,79 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
             def GetLastErrorPeer(self):
                 return 1
             def PyRecvBegin(self):
-                raise RuntimeError("ns3-ai message interface schema validation failed: direction=cpp2py")
+                raise Ns3AiSessionError(ErrorReason.ProtocolMismatch, Peer.Cpp)
 
-        raw = FailingWithNs3AiError()
-        interface = Ns3AiMsgInterface(raw, ns3ai_error_type=RuntimeError)
+        raw = FailingWithNs3AiSchemaError()
+        interface = Ns3AiMsgInterface(raw, ns3ai_error_type=Ns3AiSessionError)
 
-        with self.assertRaises(RuntimeError) as error:
+        with self.assertRaises(Ns3AiSessionError):
             interface.PyRecvBegin()
 
-        self.assertIn("direction=cpp2py", str(error.exception))
+    def test_call_raw_wraps_plain_runtime_error_when_session_failed(self):
+        class FailingWithPlainError:
+            def GetSessionState(self):
+                return 5
+            def GetErrorReason(self):
+                return 1
+            def GetLastErrorPeer(self):
+                return 1
+            def PyRecvBegin(self):
+                raise RuntimeError("something else broke")
+
+        raw = FailingWithPlainError()
+        # 不指定 ns3ai_error_type → 默认 None → 任何 Exception 都视为非 typed error
+        interface = Ns3AiMsgInterface(raw)
+
+        with self.assertRaises(Ns3AiSessionError) as error:
+            interface.PyRecvBegin()
+
+        self.assertEqual(error.exception.error_reason, ErrorReason.Timeout)
+        self.assertEqual(error.exception.last_error_peer, Peer.Cpp)
+
+    def test_call_raw_passes_through_ns3ai_schema_error(self):
+        class FailingWithNs3AiSchemaError:
+            def GetSessionState(self):
+                return 5
+            def GetErrorReason(self):
+                return 3
+            def GetLastErrorPeer(self):
+                return 1
+            def PyRecvBegin(self):
+                raise Ns3AiSessionError(ErrorReason.ProtocolMismatch, Peer.Cpp)
+
+        raw = FailingWithNs3AiSchemaError()
+        interface = Ns3AiMsgInterface(raw, ns3ai_error_type=Ns3AiSessionError)
+
+        with self.assertRaises(Ns3AiSessionError) as error:
+            interface.PyRecvBegin()
+
+        self.assertEqual(error.exception.error_reason, ErrorReason.ProtocolMismatch)
+
+    def test_compatibility_mode_emits_deprecation_warning(self):
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+
+        with self.assertWarns(DeprecationWarning) as cm:
+            Ns3AiMsgInterface.create(
+                msg_module,
+                schema_validation_mode="compatibility",
+            )
+
+        warning_msg = str(cm.warning)
+        self.assertIn("compatibility", warning_msg)
+
+    def test_disabled_mode_emits_runtime_warning(self):
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+
+        with self.assertWarns(RuntimeWarning) as cm:
+            Ns3AiMsgInterface.create(
+                msg_module,
+                schema_validation_mode="disabled",
+            )
+
+        warning_msg = str(cm.warning)
+        self.assertIn("disabled", warning_msg)
 
     def test_experiment_passes_schema_validation_mode(self):
         raw_interface = FakeMessageInterface()

@@ -473,8 +473,26 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         else if (m_schemaValidationMode == Ns3AiSchemaValidationMode::Compatibility)
         {
-            WarnIfZeroExpectedMetadata("cpp2py", m_cpp2pySchemaHash, m_cpp2pySchemaVersion);
-            WarnIfZeroExpectedMetadata("py2cpp", m_py2cppSchemaHash, m_py2cppSchemaVersion);
+            if (m_cpp2pySchemaHash == 0)
+            {
+                WarnSchemaCompatibilityMetadataMissing("cpp2py", "schema_hash",
+                                                        m_cpp2pySchemaHash, m_cpp2pySchemaHash);
+            }
+            if (m_py2cppSchemaHash == 0)
+            {
+                WarnSchemaCompatibilityMetadataMissing("py2cpp", "schema_hash",
+                                                        m_py2cppSchemaHash, m_py2cppSchemaHash);
+            }
+            if (m_cpp2pySchemaVersion == 0)
+            {
+                WarnSchemaCompatibilityMetadataMissing("cpp2py", "schema_version",
+                                                        m_cpp2pySchemaVersion, m_cpp2pySchemaVersion);
+            }
+            if (m_py2cppSchemaVersion == 0)
+            {
+                WarnSchemaCompatibilityMetadataMissing("py2cpp", "schema_version",
+                                                        m_py2cppSchemaVersion, m_py2cppSchemaVersion);
+            }
         }
         else
         {
@@ -1226,23 +1244,24 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
     /**
-     * Compatibility 模式下 expected metadata 为 0 时输出 deprecation warning。
+     * Compatibility 模式下一侧或两侧 metadata 缺失时输出 deprecation warning。
      */
-    void WarnIfZeroExpectedMetadata(const char* direction,
-                                     uint64_t schemaHash,
-                                     uint32_t schemaVersion) const
+    void WarnSchemaCompatibilityMetadataMissing(const char* direction,
+                                                  const char* field,
+                                                  uint64_t expected,
+                                                  uint64_t actual) const
     {
-        if (schemaHash == 0)
+        if (expected == 0)
         {
-            std::cerr << "ns3-ai [" << m_headerName << "] " << direction
-                      << " schema_hash is 0 (deprecated: missing schema metadata). "
+            std::cerr << "ns3-ai [" << m_headerName << "] " << direction << " " << field
+                      << " expected is 0 (deprecated: missing schema metadata on this side). "
                       << "Set schema_validation_mode='strict' after regenerating bindings."
                       << std::endl;
         }
-        if (schemaVersion == 0)
+        if (actual == 0)
         {
-            std::cerr << "ns3-ai [" << m_headerName << "] " << direction
-                      << " schema_version is 0 (deprecated: missing schema metadata). "
+            std::cerr << "ns3-ai [" << m_headerName << "] " << direction << " " << field
+                      << " actual is 0 (deprecated: missing schema metadata on peer side). "
                       << "Set schema_validation_mode='strict' after regenerating bindings."
                       << std::endl;
         }
@@ -1359,11 +1378,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
             break;
         case Ns3AiSchemaValidationMode::Compatibility:
-            if (expected == 0)
+            if (expected == 0 || actual == 0)
             {
-                WarnIfZeroExpectedMetadata(direction,
-                                           (field == std::string("schema_version") ? 1ULL : 0ULL),
-                                           (field == std::string("schema_version") ? 0U : 1U));
+                WarnSchemaCompatibilityMetadataMissing(direction, field, expected, actual);
             }
             else if (expected != actual)
             {
@@ -1397,11 +1414,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             }
             break;
         case Ns3AiSchemaValidationMode::Compatibility:
-            if (expected == 0)
+            if (expected == 0 || actual == 0)
             {
-                WarnIfZeroExpectedMetadata(direction,
-                                           (field == std::string("schema_version") ? 1ULL : 0ULL),
-                                           (field == std::string("schema_version") ? 0U : 1U));
+                WarnSchemaCompatibilityMetadataMissing(direction, field, expected, actual);
             }
             else if (expected != actual)
             {

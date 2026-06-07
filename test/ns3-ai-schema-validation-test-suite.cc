@@ -301,6 +301,61 @@ class CompatibilityModeMissingMetadataAllowsOpenTestCase : public TestCase
 /**
  * \brief Compatibility 模式下 non-zero metadata mismatch 仍然失败。
  */
+/**
+ * \brief Compatibility 模式下 creator metadata=0，opener non-zero metadata → warning 不失败。
+ */
+class CompatibilityModePeerMissingMetadataTestCase : public TestCase
+{
+  public:
+    CompatibilityModePeerMissingMetadataTestCase()
+        : TestCase("compatibility mode one side missing metadata still allows open")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("compat-peer-missing"));
+        RemoveSegment(names);
+
+        // creator has metadata=0
+        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str(),
+            0, 0, 0, 0,
+            Ns3AiSchemaValidationMode::Compatibility);
+
+        // opener has non-zero expected metadata
+        bool openerOk = false;
+        try
+        {
+            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+                false, false, true, 4096,
+                names.m_segmentName.c_str(),
+                names.m_cpp2pyMsgName.c_str(),
+                names.m_py2cppMsgName.c_str(),
+                names.m_lockableName.c_str(),
+                1000,
+                names.m_headerName.c_str(),
+                0x1111, 0x2222, 1, 1,
+                Ns3AiSchemaValidationMode::Compatibility);
+            openerOk = true;
+        }
+        catch (const std::exception&)
+        {
+        }
+
+        NS_TEST_EXPECT_MSG_EQ(openerOk, true,
+                              "Compatibility mode: opener with non-zero expected succeeds "
+                              "when creator has zero metadata on wire");
+    }
+};
+
 class CompatibilityModeMismatchStillFailsTestCase : public TestCase
 {
   public:
@@ -412,6 +467,7 @@ class Ns3AiSchemaValidationTestSuite : public TestSuite
         AddTestCase(new StrictModeHashMismatchErrorDiagnosticTestCase, TestCase::QUICK);
         AddTestCase(new StrictModeVersionMismatchRejectedTestCase, TestCase::QUICK);
         AddTestCase(new CompatibilityModeMissingMetadataAllowsOpenTestCase, TestCase::QUICK);
+        AddTestCase(new CompatibilityModePeerMissingMetadataTestCase, TestCase::QUICK);
         AddTestCase(new CompatibilityModeMismatchStillFailsTestCase, TestCase::QUICK);
         AddTestCase(new DisabledModeMismatchAllowsOpenTestCase, TestCase::QUICK);
     }
