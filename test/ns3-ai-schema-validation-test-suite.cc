@@ -457,6 +457,108 @@ class DisabledModeMismatchAllowsOpenTestCase : public TestCase
     }
 };
 
+/**
+ * \brief Strict 模式下 peer actual metadata=0 时报 missing_actual 而非普通 mismatch。
+ */
+class StrictModePeerActualMissingMetadataTestCase : public TestCase
+{
+  public:
+    StrictModePeerActualMissingMetadataTestCase()
+        : TestCase("strict mode peer actual zero reports missing actual metadata")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("strict-actual-zero"));
+        RemoveSegment(names);
+
+        // creator 用 Compatibility 发布，使 header 中 hash=0
+        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str(),
+            0, 0, 0, 0,
+            Ns3AiSchemaValidationMode::Compatibility);
+
+        // opener 用 Strict + non-zero expected → header 中 actual=0 → 应报 missing_actual
+        bool caughtMissingActual = false;
+        try
+        {
+            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+                false, false, true, 4096,
+                names.m_segmentName.c_str(),
+                names.m_cpp2pyMsgName.c_str(),
+                names.m_py2cppMsgName.c_str(),
+                names.m_lockableName.c_str(),
+                1000,
+                names.m_headerName.c_str(),
+                0x1111, 0x2222, 1, 1,
+                Ns3AiSchemaValidationMode::Strict);
+        }
+        catch (const Ns3AiSchemaError& e)
+        {
+            caughtMissingActual = true;
+            const std::string msg = e.what();
+            NS_TEST_EXPECT_MSG_NE(msg.find("issue=missing_actual"), std::string::npos,
+                                  "error mentions missing_actual");
+            NS_TEST_EXPECT_MSG_NE(msg.find("direction=cpp2py"), std::string::npos,
+                                  "error mentions direction");
+        }
+
+        NS_TEST_EXPECT_MSG_EQ(caughtMissingActual, true,
+                              "Strict mode opener reports missing_actual when peer header has zero metadata");
+    }
+};
+
+/**
+ * \brief Compatibility 模式 warning 文本通过 stderr 输出（测试可观察性）。
+ */
+class CompatibilityWarningVisibleOnStderrTestCase : public TestCase
+{
+  public:
+    CompatibilityWarningVisibleOnStderrTestCase()
+        : TestCase("compatibility mode warning visible on stderr")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("compat-warning-stderr"));
+        RemoveSegment(names);
+
+        // 捕获 std::cerr
+        std::ostringstream captured;
+        auto oldBuf = std::cerr.rdbuf(captured.rdbuf());
+
+        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str(),
+            0, 0, 0, 0,
+            Ns3AiSchemaValidationMode::Compatibility);
+
+        // 恢复 std::cerr
+        std::cerr.rdbuf(oldBuf);
+
+        const std::string output = captured.str();
+        NS_TEST_EXPECT_MSG_NE(output.find("deprecated"), std::string::npos,
+                              "compatibility warning contains 'deprecated'");
+        NS_TEST_EXPECT_MSG_NE(output.find("schema metadata"), std::string::npos,
+                              "compatibility warning mentions schema metadata");
+    }
+};
+
 class Ns3AiSchemaValidationTestSuite : public TestSuite
 {
   public:
@@ -470,6 +572,8 @@ class Ns3AiSchemaValidationTestSuite : public TestSuite
         AddTestCase(new CompatibilityModePeerMissingMetadataTestCase, TestCase::QUICK);
         AddTestCase(new CompatibilityModeMismatchStillFailsTestCase, TestCase::QUICK);
         AddTestCase(new DisabledModeMismatchAllowsOpenTestCase, TestCase::QUICK);
+        AddTestCase(new StrictModePeerActualMissingMetadataTestCase, TestCase::QUICK);
+        AddTestCase(new CompatibilityWarningVisibleOnStderrTestCase, TestCase::QUICK);
     }
 };
 

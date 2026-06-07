@@ -310,7 +310,12 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
                 schema_validation_mode="invalid_mode",
             )
 
-    def test_call_raw_passes_through_ns3ai_schema_error_message(self):
+    def test_call_raw_passes_through_ns3ai_typed_error(self):
+        class FakeNs3AiError(Exception):
+            pass
+        class FakeNs3AiSchemaError(FakeNs3AiError):
+            pass
+
         class FailingWithNs3AiSchemaError:
             def GetSessionState(self):
                 return 5
@@ -319,13 +324,15 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
             def GetLastErrorPeer(self):
                 return 1
             def PyRecvBegin(self):
-                raise Ns3AiSessionError(ErrorReason.ProtocolMismatch, Peer.Cpp)
+                raise FakeNs3AiSchemaError("ns3-ai schema validation failed: direction=cpp2py")
 
         raw = FailingWithNs3AiSchemaError()
-        interface = Ns3AiMsgInterface(raw, ns3ai_error_type=Ns3AiSessionError)
+        interface = Ns3AiMsgInterface(raw, ns3ai_error_type=FakeNs3AiError)
 
-        with self.assertRaises(Ns3AiSessionError):
+        with self.assertRaises(FakeNs3AiSchemaError) as error:
             interface.PyRecvBegin()
+
+        self.assertIn("direction=cpp2py", str(error.exception))
 
     def test_call_raw_wraps_plain_runtime_error_when_session_failed(self):
         class FailingWithPlainError:
@@ -392,6 +399,77 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
 
         warning_msg = str(cm.warning)
         self.assertIn("disabled", warning_msg)
+
+    def test_deprecated_schema_hash_fallback_emits_warning(self):
+        raw_interface = FakeMessageInterface()
+
+        class OldStyleFakeModule:
+            default_sync_timeout_us = 0
+            schema_hash = 0xABCD
+            schema_version = 42
+            Ns3AiError = RuntimeError
+
+            def __init__(self, raw_interface):
+                self.raw_interface = raw_interface
+                self.constructor_args = None
+
+            def Ns3AiMsgInterfaceImpl(self, *args):
+                self.constructor_args = args
+                return self.raw_interface
+
+            @property
+            def __name__(self):
+                return 'OldStyleFakeModule'
+
+        module = OldStyleFakeModule(raw_interface)
+
+        with self.assertWarns(DeprecationWarning) as cm:
+            Ns3AiMsgInterface.create(
+                module,
+                schema_validation_mode="compatibility",
+            )
+
+        warning_msg = str(cm.warning)
+        self.assertIn('schema_hash', warning_msg)
+        self.assertIn('deprecated', warning_msg)
+        self.assertIn('cpp2py_schema_hash', warning_msg)
+
+        # 验证值正确 fallback 到了 schema_hash
+        args = module.constructor_args
+        self.assertEqual(args[10], 0xABCD)  # cpp2py_schema_hash
+        self.assertEqual(args[11], 0xABCD)  # py2cpp_schema_hash
+        self.assertEqual(args[12], 42)      # cpp2py_schema_version
+        self.assertEqual(args[13], 42)      # py2cpp_schema_version
+
+    def test_deprecated_schema_hash_explicit_arg_priority(self):
+        raw_interface = FakeMessageInterface()
+
+        class OldStyleFakeModule:
+            default_sync_timeout_us = 0
+            schema_hash = 0xABCD
+            Ns3AiError = RuntimeError
+
+            def __init__(self, raw_interface):
+                self.raw_interface = raw_interface
+                self.constructor_args = None
+
+            def Ns3AiMsgInterfaceImpl(self, *args):
+                self.constructor_args = args
+                return self.raw_interface
+
+        module = OldStyleFakeModule(raw_interface)
+
+        # explicit arg 应覆盖 deprecated schema_hash
+        interface = Ns3AiMsgInterface.create(
+            module,
+            cpp2py_schema_hash=0x9999,
+            py2cpp_schema_hash=0x8888,
+            schema_validation_mode="compatibility",
+        )
+
+        args = module.constructor_args
+        self.assertEqual(args[10], 0x9999)  # explicit 覆盖 deprecated
+        self.assertEqual(args[11], 0x8888)
 
     def test_experiment_passes_schema_validation_mode(self):
         raw_interface = FakeMessageInterface()

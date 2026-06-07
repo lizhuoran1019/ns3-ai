@@ -468,8 +468,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         // 预检：Strict 模式下 expected metadata 不得为 0
         if (m_schemaValidationMode == Ns3AiSchemaValidationMode::Strict)
         {
-            RequireNonZeroExpectedMetadata("cpp2py", m_cpp2pySchemaHash, m_cpp2pySchemaVersion);
-            RequireNonZeroExpectedMetadata("py2cpp", m_py2cppSchemaHash, m_py2cppSchemaVersion);
+            CheckExpectedMetadataNonZero("cpp2py", "schema_hash", m_cpp2pySchemaHash);
+            CheckExpectedMetadataNonZero("py2cpp", "schema_hash", m_py2cppSchemaHash);
+            CheckExpectedMetadataNonZero("cpp2py", "schema_version", m_cpp2pySchemaVersion);
+            CheckExpectedMetadataNonZero("py2cpp", "schema_version", m_py2cppSchemaVersion);
         }
         else if (m_schemaValidationMode == Ns3AiSchemaValidationMode::Compatibility)
         {
@@ -1209,38 +1211,61 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
     /**
-     * 校验 expected schema metadata：Strict 模式下不可为 0。
+     * 检查 expected metadata 非零，若为零则抛 Ns3AiSchemaError。
      */
-    void RequireNonZeroExpectedMetadata(const char* direction,
-                                         uint64_t schemaHash,
-                                         uint32_t schemaVersion) const
+    void CheckExpectedMetadataNonZero(const char* direction,
+                                       const char* field,
+                                       uint64_t value) const
     {
-        if (schemaHash == 0)
+        if (value == 0)
         {
-            std::ostringstream oss;
-            oss << "ns3-ai message interface schema validation failed:\n"
-                << "direction=" << direction << "\n"
-                << "field=schema_hash\n"
-                << "expected=(non-zero)\n"
-                << "actual=0x0\n"
-                << "mode=strict\n"
-                << "header=" << m_headerName << "\n"
-                << "segment=" << m_segName << ".";
-            throw Ns3AiSchemaError(oss.str());
+            ThrowMissingExpectedMetadata(direction, field);
         }
-        if (schemaVersion == 0)
+    };
+
+    /** CheckExpectedMetadataNonZero uint32_t 重载 */
+    void CheckExpectedMetadataNonZero(const char* direction,
+                                       const char* field,
+                                       uint32_t value) const
+    {
+        if (value == 0)
         {
-            std::ostringstream oss;
-            oss << "ns3-ai message interface schema validation failed:\n"
-                << "direction=" << direction << "\n"
-                << "field=schema_version\n"
-                << "expected=(non-zero)\n"
-                << "actual=0\n"
-                << "mode=strict\n"
-                << "header=" << m_headerName << "\n"
-                << "segment=" << m_segName << ".";
-            throw Ns3AiSchemaError(oss.str());
+            ThrowMissingExpectedMetadata(direction, field);
         }
+    };
+
+    [[noreturn]] void ThrowMissingExpectedMetadata(const char* direction,
+                                                    const char* field) const
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai message interface schema validation failed:\n"
+            << "direction=" << direction << "\n"
+            << "field=" << field << "\n"
+            << "issue=missing_expected\n"
+            << "expected=(non-zero)\n"
+            << "actual=(not published)\n"
+            << "mode=strict\n"
+            << "header=" << m_headerName << "\n"
+            << "segment=" << m_segName << ".";
+        // 不能在此调用 MarkPeerError：可能在构造预检阶段被调用，此时 m_sync 为 nullptr
+        throw Ns3AiSchemaError(oss.str());
+    };
+
+    [[noreturn]] void ThrowMissingActualMetadata(const char* direction,
+                                                  const char* field) const
+    {
+        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
+        std::ostringstream oss;
+        oss << "ns3-ai message interface schema validation failed:\n"
+            << "direction=" << direction << "\n"
+            << "field=" << field << "\n"
+            << "issue=missing_actual\n"
+            << "expected=(non-zero)\n"
+            << "actual=0x0\n"
+            << "mode=strict\n"
+            << "header=" << m_headerName << "\n"
+            << "segment=" << m_segName << ".";
+        throw Ns3AiSchemaError(oss.str());
     };
 
     /**
@@ -1368,9 +1393,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         case Ns3AiSchemaValidationMode::Strict:
             if (expected == 0)
             {
-                RequireNonZeroExpectedMetadata(direction,
-                                               (field == std::string("schema_version") ? 1ULL : 0ULL),
-                                               0);
+                ThrowMissingExpectedMetadata(direction, field);
+            }
+            if (actual == 0)
+            {
+                ThrowMissingActualMetadata(direction, field);
             }
             if (expected != actual)
             {
@@ -1404,9 +1431,11 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         case Ns3AiSchemaValidationMode::Strict:
             if (expected == 0)
             {
-                RequireNonZeroExpectedMetadata(direction,
-                                               0,
-                                               (field == std::string("schema_version") ? 0U : 1U));
+                ThrowMissingExpectedMetadata(direction, field);
+            }
+            if (actual == 0)
+            {
+                ThrowMissingActualMetadata(direction, field);
             }
             if (expected != actual)
             {
