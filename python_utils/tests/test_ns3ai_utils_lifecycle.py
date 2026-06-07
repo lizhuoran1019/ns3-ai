@@ -11,6 +11,7 @@ from ns3ai_utils import Ns3AiSessionError
 from ns3ai_utils import Ns3AiSessionTimeoutError
 from ns3ai_utils import Peer
 from ns3ai_utils import SessionState
+from ns3ai_utils import SchemaValidationMode
 
 
 class FakeMessageInterface:
@@ -100,6 +101,7 @@ class FakeMsgModule:
     default_sync_timeout_us = 0
     schema_hash = 0
     schema_version = 0
+    Ns3AiError = RuntimeError
 
     def __init__(self, raw_interface):
         self.raw_interface = raw_interface
@@ -271,6 +273,66 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         experiment = Experiment("target", "../../../../../", msg_module)
         self.assertEqual(experiment.ns3Path, os.path.abspath("../../../../../"))
 
+    def test_schema_validation_mode_enum_values(self):
+        self.assertEqual(SchemaValidationMode.Strict, 0)
+        self.assertEqual(SchemaValidationMode.Compatibility, 1)
+        self.assertEqual(SchemaValidationMode.Disabled, 2)
+
+    def test_schema_validation_mode_passed_to_constructor(self):
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+
+        interface = Ns3AiMsgInterface.create(
+            msg_module,
+            schema_validation_mode="compatibility",
+        )
+
+        self.assertEqual(msg_module.constructor_args is not None, True)
+        args = msg_module.constructor_args
+        mode_arg = args[14]  # 15th positional arg
+        self.assertEqual(mode_arg, SchemaValidationMode.Compatibility)
+
+    def test_schema_validation_mode_invalid_string_raises(self):
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+
+        with self.assertRaises(ValueError):
+            Ns3AiMsgInterface.create(
+                msg_module,
+                schema_validation_mode="invalid_mode",
+            )
+
+    def test_call_raw_passes_through_ns3ai_error(self):
+        class FailingWithNs3AiError:
+            def GetSessionState(self):
+                return 5
+            def GetErrorReason(self):
+                return 3
+            def GetLastErrorPeer(self):
+                return 1
+            def PyRecvBegin(self):
+                raise RuntimeError("ns3-ai message interface schema validation failed: direction=cpp2py")
+
+        raw = FailingWithNs3AiError()
+        interface = Ns3AiMsgInterface(raw, ns3ai_error_type=RuntimeError)
+
+        with self.assertRaises(RuntimeError) as error:
+            interface.PyRecvBegin()
+
+        self.assertIn("direction=cpp2py", str(error.exception))
+
+    def test_experiment_passes_schema_validation_mode(self):
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+
+        experiment = Experiment("target", ".", msg_module,
+                                schemaValidationMode="compatibility")
+
+        self.assertEqual(msg_module.constructor_args is not None, True)
+        args = msg_module.constructor_args
+        mode_arg = args[14]
+        self.assertEqual(mode_arg, SchemaValidationMode.Compatibility)
+
     def test_wrapper_can_create_or_open_shared_memory_session_from_msg_module(self):
         creator_raw = FakeMessageInterface()
         creator_module = FakeMsgModule(creator_raw)
@@ -309,6 +371,7 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
             22,
             1,
             2,
+            SchemaValidationMode.Strict,
         ))
 
         opener_raw = FakeMessageInterface()
