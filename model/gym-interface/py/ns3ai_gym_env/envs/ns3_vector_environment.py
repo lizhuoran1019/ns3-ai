@@ -1,5 +1,7 @@
 import gymnasium as gym
+import time
 
+from ns3ai_utils import Ns3AiSessionTimeoutError
 from ns3ai_gym_env.envs.ns3_environment import Ns3Env
 
 
@@ -57,6 +59,8 @@ class Ns3VecEnv:
                                                               show_output=show_output)
 
         for env in self.envs:
+            if launch_simulation:
+                self._wait_ready(env, self.envs[0].exp)
             env.initialize_env()
         for env in self.envs:
             env.rx_env_state()
@@ -65,6 +69,19 @@ class Ns3VecEnv:
         self.single_action_space = self.envs[0].action_space
         self.observation_space = gym.spaces.Tuple(tuple(env.observation_space for env in self.envs))
         self.action_space = gym.spaces.Tuple(tuple(env.action_space for env in self.envs))
+
+    def _wait_ready(self, env, launcher_exp):
+        deadline = time.monotonic() + (env.exp.syncTimeoutUs / 1000000.0)
+        while True:
+            if not launcher_exp.isalive():
+                launcher_exp._raise_subprocess_early_exit()
+            try:
+                env.msgInterface.wait_ready(timeout=0)
+                return
+            except Ns3AiSessionTimeoutError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.001)
 
     def reset(self, seed=None, options=None):
         if any(env.envDirty for env in self.envs):

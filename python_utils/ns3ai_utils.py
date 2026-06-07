@@ -21,11 +21,198 @@ import os
 import shlex
 import subprocess
 import psutil
+import sys
 import time
+from enum import IntEnum
 
 
 SIMULATION_EARLY_ENDING = 0.5
 DEFAULT_SYNC_TIMEOUT_US = 300000000
+
+
+class Peer(IntEnum):
+    None_ = 0
+    Cpp = 1
+    Py = 2
+
+
+class SessionState(IntEnum):
+    Init = 0
+    Ready = 1
+    Running = 2
+    Closing = 3
+    Closed = 4
+    Error = 5
+
+
+class CloseReason(IntEnum):
+    None_ = 0
+    Normal = 1
+    UserInterrupted = 2
+
+
+class ErrorReason(IntEnum):
+    None_ = 0
+    Timeout = 1
+    PeerDeath = 2
+    ProtocolMismatch = 3
+    StaleGeneration = 4
+    UserInterrupted = 5
+    InvalidState = 6
+
+
+class Ns3AiSessionError(RuntimeError):
+    def __init__(self, error_reason, last_error_peer):
+        self.error_reason = ErrorReason(error_reason)
+        self.last_error_peer = Peer(last_error_peer)
+        super().__init__(
+            'ns3ai_utils: Shared-memory session failed with error_reason={} last_error_peer={}'.format(
+                self.error_reason.name,
+                self.last_error_peer.name,
+            )
+        )
+
+
+class Ns3AiSessionTimeoutError(TimeoutError):
+    pass
+
+
+class Ns3AiMsgInterface:
+    def __init__(self, raw_interface):
+        self._raw_interface = raw_interface
+
+    @classmethod
+    def create(cls, msg_module, **kwargs):
+        return cls._from_msg_module(msg_module, True, **kwargs)
+
+    @classmethod
+    def open(cls, msg_module, **kwargs):
+        return cls._from_msg_module(msg_module, False, **kwargs)
+
+    @classmethod
+    def _from_msg_module(cls,
+                         msg_module,
+                         is_memory_creator,
+                         use_vector=False,
+                         handle_finish=False,
+                         shm_size=4096,
+                         seg_name="My Seg",
+                         cpp2py_msg_name="My Cpp to Python Msg",
+                         py2cpp_msg_name="My Python to Cpp Msg",
+                         lockable_name="My Lockable",
+                         sync_timeout_us=None,
+                         header_name="My Header",
+                         cpp2py_schema_hash=None,
+                         py2cpp_schema_hash=None,
+                         cpp2py_schema_version=None,
+                         py2cpp_schema_version=None):
+        if sync_timeout_us is None:
+            sync_timeout_us = getattr(msg_module, 'default_sync_timeout_us', DEFAULT_SYNC_TIMEOUT_US)
+        cpp2py_schema_hash = _module_default(cpp2py_schema_hash, msg_module, 'schema_hash')
+        py2cpp_schema_hash = _module_default(py2cpp_schema_hash, msg_module, 'schema_hash')
+        cpp2py_schema_version = _module_default(cpp2py_schema_version, msg_module, 'schema_version')
+        py2cpp_schema_version = _module_default(py2cpp_schema_version, msg_module, 'schema_version')
+        return cls(msg_module.Ns3AiMsgInterfaceImpl(
+            is_memory_creator,
+            use_vector,
+            handle_finish,
+            shm_size,
+            seg_name,
+            cpp2py_msg_name,
+            py2cpp_msg_name,
+            lockable_name,
+            sync_timeout_us,
+            header_name,
+            cpp2py_schema_hash,
+            py2cpp_schema_hash,
+            cpp2py_schema_version,
+            py2cpp_schema_version,
+        ))
+
+    @property
+    def raw_interface(self):
+        return self._raw_interface
+
+    @property
+    def session_state(self):
+        return SessionState(self._raw_interface.GetSessionState())
+
+    @property
+    def session_id(self):
+        return self._raw_interface.GetSessionId()
+
+    @property
+    def generation_id(self):
+        return self._raw_interface.GetGenerationId()
+
+    @property
+    def close_reason(self):
+        return CloseReason(self._raw_interface.GetCloseReason())
+
+    @property
+    def error_reason(self):
+        return ErrorReason(self._raw_interface.GetErrorReason())
+
+    @property
+    def last_error_peer(self):
+        return Peer(self._raw_interface.GetLastErrorPeer())
+
+    def wait_ready(self, timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            state = self.session_state
+            if state in (SessionState.Ready, SessionState.Running):
+                return True
+            if state == SessionState.Error:
+                raise Ns3AiSessionError(self.error_reason, self.last_error_peer)
+            if time.monotonic() >= deadline:
+                raise Ns3AiSessionTimeoutError(
+                    'ns3ai_utils: Timed out waiting for shared-memory session readiness'
+                )
+            time.sleep(0.001)
+
+    def request_close(self, reason):
+        if not isinstance(reason, CloseReason):
+            raise TypeError('ns3ai_utils: close reason must be a CloseReason enum value')
+        return self._raw_interface.RequestClose(Peer.Py, reason)
+
+    def acknowledge_close(self):
+        return self._raw_interface.AcknowledgeClose(Peer.Py)
+
+    def _call_raw(self, method_name):
+        try:
+            return getattr(self._raw_interface, method_name)()
+        except Exception:
+            if self.session_state == SessionState.Error:
+                raise Ns3AiSessionError(self.error_reason, self.last_error_peer)
+            raise
+
+    def PyRecvBegin(self):
+        return self._call_raw('PyRecvBegin')
+
+    def PyRecvEnd(self):
+        return self._call_raw('PyRecvEnd')
+
+    def PySendBegin(self):
+        return self._call_raw('PySendBegin')
+
+    def PySendEnd(self):
+        return self._call_raw('PySendEnd')
+
+    def PyGetFinished(self):
+        return self._call_raw('PyGetFinished')
+
+    def GetCpp2PyStruct(self):
+        return self._raw_interface.GetCpp2PyStruct()
+
+    def GetPy2CppStruct(self):
+        return self._raw_interface.GetPy2CppStruct()
+
+    def GetCpp2PyVector(self):
+        return self._raw_interface.GetCpp2PyVector()
+
+    def GetPy2CppVector(self):
+        return self._raw_interface.GetPy2CppVector()
 
 
 def get_setting(setting_map):
@@ -67,6 +254,13 @@ def _module_default(value, module, attr, fallback=0):
     if value is None:
         return getattr(module, attr, fallback)
     return value
+
+
+def _resolve_ns3_path(ns3_path):
+    if os.path.isabs(ns3_path):
+        return os.path.abspath(ns3_path)
+    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.abspath(os.path.join(script_dir, ns3_path))
 
 
 def run_single_ns3(path, pname, setting=None, env=None, show_output=False):
@@ -134,7 +328,7 @@ class Experiment:
                  shmPrefix=None,
                  env=None):
         self.targetName = targetName
-        self.ns3Path = os.path.abspath(ns3Path)
+        self.ns3Path = _resolve_ns3_path(ns3Path)
         self.msgModule = msgModule
         self.handleFinish = handleFinish
         self.useVector = useVector
@@ -162,21 +356,21 @@ class Experiment:
         self.py2cppSchemaVersion = _module_default(py2cppSchemaVersion, msgModule, 'schema_version')
         self.env = env or {}
 
-        self.msgInterface = msgModule.Ns3AiMsgInterfaceImpl(
-            True,
-            self.useVector,
-            self.handleFinish,
-            self.shmSize,
-            self.segName,
-            self.cpp2pyMsgName,
-            self.py2cppMsgName,
-            self.lockableName,
-            self.syncTimeoutUs,
-            self.headerName,
-            self.cpp2pySchemaHash,
-            self.py2cppSchemaHash,
-            self.cpp2pySchemaVersion,
-            self.py2cppSchemaVersion,
+        self.msgInterface = Ns3AiMsgInterface.create(
+            msgModule,
+            use_vector=self.useVector,
+            handle_finish=self.handleFinish,
+            shm_size=self.shmSize,
+            seg_name=self.segName,
+            cpp2py_msg_name=self.cpp2pyMsgName,
+            py2cpp_msg_name=self.py2cppMsgName,
+            lockable_name=self.lockableName,
+            sync_timeout_us=self.syncTimeoutUs,
+            header_name=self.headerName,
+            cpp2py_schema_hash=self.cpp2pySchemaHash,
+            py2cpp_schema_hash=self.py2cppSchemaHash,
+            cpp2py_schema_version=self.cpp2pySchemaVersion,
+            py2cpp_schema_version=self.py2cppSchemaVersion,
         )
         if self.useVector:
             if self.vectorSize is None:
@@ -207,17 +401,7 @@ class Experiment:
         self.simCmd, self.proc = run_single_ns3(
             self.ns3Path, self.targetName, setting=setting, env=run_env, show_output=show_output)
         print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
-        time.sleep(SIMULATION_EARLY_ENDING)
-        if not self.isalive():
-            stdout = None
-            stderr = None
-            if self.proc.stdout is not None or self.proc.stderr is not None:
-                stdout, stderr = self.proc.communicate()
-            raise Ns3AiExperimentError(
-                'ns3ai_utils: Subprocess died very early while running `{}`. stdout={!r}, stderr={!r}'.format(
-                    self.simCmd, stdout, stderr
-                )
-            )
+        self._wait_ready_or_subprocess_exit()
         return self.msgInterface
 
     def kill(self):
@@ -228,6 +412,30 @@ class Experiment:
 
     def isalive(self):
         return self.proc is not None and self.proc.poll() is None
+
+    def _raise_subprocess_early_exit(self):
+        stdout = None
+        stderr = None
+        if self.proc.stdout is not None or self.proc.stderr is not None:
+            stdout, stderr = self.proc.communicate()
+        raise Ns3AiExperimentError(
+            'ns3ai_utils: Subprocess died very early while running `{}`. stdout={!r}, stderr={!r}'.format(
+                self.simCmd, stdout, stderr
+            )
+        )
+
+    def _wait_ready_or_subprocess_exit(self):
+        deadline = time.monotonic() + (self.syncTimeoutUs / 1000000.0)
+        while True:
+            if not self.isalive():
+                self._raise_subprocess_early_exit()
+            try:
+                self.msgInterface.wait_ready(timeout=0)
+                return
+            except Ns3AiSessionTimeoutError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.001)
 
 
 class ParallelExperiment:
@@ -287,9 +495,16 @@ class ParallelExperiment:
 
 
 __all__ = [
+    'CloseReason',
+    'ErrorReason',
     'Experiment',
-    'ParallelExperiment',
-    'make_shm_names',
     'Ns3AiExperimentError',
+    'Ns3AiMsgInterface',
+    'Ns3AiSessionError',
+    'Ns3AiSessionTimeoutError',
+    'ParallelExperiment',
+    'Peer',
+    'SessionState',
+    'make_shm_names',
     'DEFAULT_SYNC_TIMEOUT_US',
 ]
