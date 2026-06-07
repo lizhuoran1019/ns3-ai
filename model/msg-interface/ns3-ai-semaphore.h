@@ -20,101 +20,94 @@
 #ifndef NS3_AI_SEMAPHORE_H
 #define NS3_AI_SEMAPHORE_H
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <ostream>
 #include <stdexcept>
 #include <thread>
 
 /**
- * \brief Structure providing semaphore operations
+ * \brief 二元信号量，基于 std::atomic 实现。
+ *
+ * 信号量仅在 0（空闲）和 1（已占用）之间振荡。
+ * sem_post 使用 exchange(1) 饱和写入，不会回绕。
+ * sem_try_wait 使用单次 CAS(1→0) 获取令牌。
  */
 struct Ns3AiSemaphore
 {
-    explicit Ns3AiSemaphore() = default;
+    /** \brief sem_timed_wait 的返回结果 */
+    enum class WaitResult : uint8_t
+    {
+        Acquired = 0, // 成功获取令牌
+        Timeout = 1,  // 超时
+        Aborted = 2   // 对端完成（abort_flag 触发）
+    };
+
+    /** \brief WaitResult 的流式输出，用于测试和诊断 */
+    friend inline std::ostream& operator<<(std::ostream& os, WaitResult wr)
+    {
+        switch (wr)
+        {
+        case WaitResult::Acquired:
+            return os << "Acquired";
+        case WaitResult::Timeout:
+            return os << "Timeout";
+        case WaitResult::Aborted:
+            return os << "Aborted";
+        }
+        return os << "Unknown";
+    }
 
     /**
-     * Default wait upper bound for legacy callers.
+     * 旧式阻塞等待的超时上限。
      *
-     * A broken C++/Python send-recv order or a dead peer must not trap the
-     * process in an infinite busy-wait. 300 s is deliberately conservative so
-     * normal slow Python inference is still tolerated while protocol bugs
-     * become visible.
+     * 错误配对或对端死亡不应导致无限忙等。
+     * 300 秒足够容忍慢速 Python 推理，同时确保协议 bug 可见。
      */
     static constexpr uint64_t DEFAULT_SEM_WAIT_TIMEOUT_US = 300000000;
 
-    static inline uint8_t atomic_read8(const volatile uint8_t* mem)
+    /**
+     * 尝试获取令牌，不等待。
+     * \return true 表示获取成功，false 表示计数器为 0。
+     */
+    static inline bool sem_try_wait(std::atomic<uint8_t>* mem)
     {
-        return __atomic_load_n(const_cast<const uint8_t*>(mem), __ATOMIC_ACQUIRE);
-    }
-
-    static inline uint8_t atomic_cas8(volatile uint8_t* mem, uint8_t with, uint8_t cmp)
-    {
-        uint8_t expected = cmp;
-        __atomic_compare_exchange_n(const_cast<uint8_t*>(mem),
-                                    &expected,
-                                    with,
-                                    false,
-                                    __ATOMIC_ACQ_REL,
-                                    __ATOMIC_ACQUIRE);
-        return expected;
-    }
-
-    static inline uint8_t atomic_add8(volatile uint8_t* mem, uint8_t val)
-    {
-        return __atomic_fetch_add(const_cast<uint8_t*>(mem), val, __ATOMIC_RELEASE);
-    }
-
-    static inline bool atomic_add_unless8(volatile uint8_t* mem, uint8_t value, uint8_t unless_this)
-    {
-        uint8_t current = atomic_read8(mem);
-        while (current != unless_this)
-        {
-            const uint8_t desired = static_cast<uint8_t>(current + value);
-            if (__atomic_compare_exchange_n(const_cast<uint8_t*>(mem),
-                                            &current,
-                                            desired,
-                                            false,
-                                            __ATOMIC_ACQ_REL,
-                                            __ATOMIC_ACQUIRE))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static inline bool sem_try_wait(volatile uint8_t* mem)
-    {
-        return atomic_add_unless8(mem, static_cast<uint8_t>(-1), 0);
+        uint8_t expected = 1;
+        return mem->compare_exchange_strong(expected,
+                                            0,
+                                            std::memory_order_acquire,
+                                            std::memory_order_relaxed);
     }
 
     /**
-     * Waits for a semaphore token without throwing.
+     * 带超时和中止标志的等待。
      *
-     * timeout_us == 0 preserves the historical unbounded wait behavior.
-     * abort_flag may point to a shared-memory flag used by a higher-level
-     * protocol to stop waiting when the peer has finished.
+     * \param mem            信号量计数器
+     * \param timeout_us     超时微秒数；0 表示无超时
+     * \param abort_flag     对端完成标志，触发后返回 WaitResult::Aborted
+     * \return               获取结果
      */
-    static inline bool sem_timed_wait(volatile uint8_t* mem,
-                                      uint64_t timeout_us,
-                                      const volatile bool* abort_flag = nullptr)
+    static inline WaitResult sem_timed_wait(std::atomic<uint8_t>* mem,
+                                            uint64_t timeout_us,
+                                            const std::atomic<bool>* abort_flag = nullptr)
     {
         if (sem_try_wait(mem))
         {
-            return true;
+            return WaitResult::Acquired;
         }
 
         const auto start = std::chrono::steady_clock::now();
         uint32_t attempts = 0;
         while (true)
         {
-            if (abort_flag != nullptr && AtomicReadBool(abort_flag))
+            if (abort_flag != nullptr && abort_flag->load(std::memory_order_acquire))
             {
-                return false;
+                return WaitResult::Aborted;
             }
             if (sem_try_wait(mem))
             {
-                return true;
+                return WaitResult::Acquired;
             }
             if (timeout_us > 0)
             {
@@ -122,7 +115,7 @@ struct Ns3AiSemaphore
                     std::chrono::steady_clock::now() - start);
                 if (static_cast<uint64_t>(elapsed.count()) >= timeout_us)
                 {
-                    return false;
+                    return WaitResult::Timeout;
                 }
             }
             Backoff(attempts++);
@@ -130,39 +123,40 @@ struct Ns3AiSemaphore
     }
 
     /**
-     * Legacy blocking API. It now fails loudly instead of spinning forever.
+     * 旧式阻塞 API。失败时立即抛异常，而非无限自旋。
      */
-    static inline void sem_wait(volatile uint8_t* mem)
+    static inline void sem_wait(std::atomic<uint8_t>* mem)
     {
-        if (!sem_timed_wait(mem, DEFAULT_SEM_WAIT_TIMEOUT_US))
+        if (sem_timed_wait(mem, DEFAULT_SEM_WAIT_TIMEOUT_US) != WaitResult::Acquired)
         {
             throw std::runtime_error(
-                "ns3-ai semaphore wait timed out. Check that C++ and Python send/recv calls "
-                "are paired in the same order, and that the peer process is still alive.");
+                "ns3-ai 信号量等待超时。请检查 C++ 和 Python 的 send/recv 调用是否成对且顺序一致，"
+                "以及对端进程是否仍然存活。");
         }
     }
 
     /**
-     * Blocking API with a caller-specified timeout. timeout_us == 0 means no timeout.
+     * 带调用者指定超时的等待。
+     * timeout_us == 0 表示无超时。
+     * \return WaitResult::Acquired 表示获取成功，否则为失败原因。
      */
-    static inline bool sem_wait(volatile uint8_t* mem,
-                                uint64_t timeout_us,
-                                const volatile bool* abort_flag = nullptr)
+    static inline WaitResult sem_wait(std::atomic<uint8_t>* mem,
+                                      uint64_t timeout_us,
+                                      const std::atomic<bool>* abort_flag = nullptr)
     {
         return sem_timed_wait(mem, timeout_us, abort_flag);
     }
 
-    static inline uint8_t sem_post(volatile uint8_t* mem)
+    /**
+     * 释放令牌（计数器置 1）。
+     * \return 旧值。若返回值 >= 1，表示重复释放（协议 bug），记录诊断日志。
+     */
+    static inline uint8_t sem_post(std::atomic<uint8_t>* mem)
     {
-        return atomic_add8(mem, 1);
+        return mem->exchange(1, std::memory_order_release);
     }
 
   private:
-    static inline bool AtomicReadBool(const volatile bool* mem)
-    {
-        return __atomic_load_n(const_cast<const bool*>(mem), __ATOMIC_ACQUIRE);
-    }
-
     static inline void Backoff(uint32_t attempts)
     {
         if (attempts < 64)
