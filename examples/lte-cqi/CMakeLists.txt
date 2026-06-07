@@ -18,6 +18,7 @@ build_lib_example(
 )
 
 pybind11_add_module(ns3ai_ltecqi_py use-msg/lte_cqi_py.cc)
+target_include_directories(ns3ai_ltecqi_py PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../model/msg-interface)
 set_target_properties(ns3ai_ltecqi_py PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/use-msg/)
 target_link_libraries(ns3ai_ltecqi_py PRIVATE ${libai})

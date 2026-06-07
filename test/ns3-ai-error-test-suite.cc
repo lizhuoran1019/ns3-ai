@@ -8,6 +8,9 @@
 
 #include "ns3/ns3-ai-errors.h"
 #include "ns3/ns3-ai-msg-interface.h"
+#include "ns3/ns3-ai-vector-gym-env.h"
+#include "ns3/spaces.h"
+#include "ns3/container.h"
 #include "ns3/test.h"
 
 #include <boost/interprocess/shared_memory_object.hpp>
@@ -483,6 +486,89 @@ class OpenOnlyMissingHeaderObjectTestCase : public TestCase
 };
 
 /**
+ * \brief 每个异常子类可被其自身类型捕获（不仅是基类）。
+ */
+class Ns3AiErrorCatchBySpecificTypeTestCase : public TestCase
+{
+  public:
+    Ns3AiErrorCatchBySpecificTypeTestCase()
+        : TestCase("each exception subclass is caught by its own type")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        bool caught = false;
+        try { throw Ns3AiRuntimeError("test"); }
+        catch (const Ns3AiRuntimeError&) { caught = true; }
+        NS_TEST_EXPECT_MSG_EQ(caught, true, "Ns3AiRuntimeError caught by Ns3AiRuntimeError");
+
+        caught = false;
+        try { throw Ns3AiTimeoutError("test"); }
+        catch (const Ns3AiTimeoutError&) { caught = true; }
+        NS_TEST_EXPECT_MSG_EQ(caught, true, "Ns3AiTimeoutError caught by Ns3AiTimeoutError");
+
+        caught = false;
+        try { throw Ns3AiProtocolError("test"); }
+        catch (const Ns3AiProtocolError&) { caught = true; }
+        NS_TEST_EXPECT_MSG_EQ(caught, true, "Ns3AiProtocolError caught by Ns3AiProtocolError");
+
+        caught = false;
+        try { throw Ns3AiSchemaError("test"); }
+        catch (const Ns3AiSchemaError&) { caught = true; }
+        NS_TEST_EXPECT_MSG_EQ(caught, true, "Ns3AiSchemaError caught by Ns3AiSchemaError");
+    }
+};
+
+/**
+ * \brief OpenGymVectorEnv 构造时 numEnvs=0 抛 Ns3AiRuntimeError。
+ *
+ * 使用派生自 OpenGymVectorEnv 的最小测试桩，绕过纯虚方法约束。
+ */
+class TestVectorEnv : public OpenGymVectorEnv
+{
+  public:
+    TestVectorEnv(uint32_t numEnvs)
+        : OpenGymVectorEnv(numEnvs)
+    {
+    }
+
+    Ptr<OpenGymSpace> GetActionSpace(uint32_t) override { return nullptr; }
+    Ptr<OpenGymSpace> GetObservationSpace(uint32_t) override { return nullptr; }
+    bool GetGameOver(uint32_t) override { return false; }
+    Ptr<OpenGymDataContainer> GetObservation(uint32_t) override { return nullptr; }
+    float GetReward(uint32_t) override { return 0.0f; }
+    std::string GetExtraInfo(uint32_t) override { return ""; }
+    bool ExecuteActions(uint32_t, Ptr<OpenGymDataContainer>) override { return false; }
+};
+
+class VectorEnvZeroEnvsTestCase : public TestCase
+{
+  public:
+    VectorEnvZeroEnvsTestCase()
+        : TestCase("OpenGymVectorEnv with zero envs throws Ns3AiRuntimeError")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        bool caught = false;
+        try
+        {
+            TestVectorEnv env(0);
+        }
+        catch (const Ns3AiRuntimeError&)
+        {
+            caught = true;
+        }
+        NS_TEST_EXPECT_MSG_EQ(caught, true,
+                              "OpenGymVectorEnv(0) throws Ns3AiRuntimeError");
+    }
+};
+
+/**
  * \brief 未开启 finish-handling 时调用 CppSetFinished 抛 Ns3AiRuntimeError。
  */
 class FinishHandlingNotConfiguredTestCase : public TestCase
@@ -573,6 +659,8 @@ class Ns3AiErrorTestSuite : public TestSuite
         AddTestCase(new OpenOnlyMissingStructObjectTestCase, TestCase::QUICK);
         AddTestCase(new OpenOnlyMissingSyncObjectTestCase, TestCase::QUICK);
         AddTestCase(new OpenOnlyMissingHeaderObjectTestCase, TestCase::QUICK);
+        AddTestCase(new Ns3AiErrorCatchBySpecificTypeTestCase, TestCase::QUICK);
+        AddTestCase(new VectorEnvZeroEnvsTestCase, TestCase::QUICK);
         AddTestCase(new FinishHandlingNotConfiguredTestCase, TestCase::QUICK);
     }
 };

@@ -18,7 +18,8 @@
  */
 
 #include <ns3/ai-module.h>
-#include <ns3/ns3-ai-errors.h>
+
+#include "ns3-ai-pybind-errors.h"
 
 #include <pybind11/pybind11.h>
 
@@ -42,13 +43,7 @@ ValidateGymMsgSize(const Ns3AiGymMsg& msg)
 
 PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 {
-    // 注册 ns3-ai 异常类，使 Python 调用方可按类别捕获
-    py::register_exception<ns3::Ns3AiError>(m, "Ns3AiError", PyExc_Exception);
-    py::register_exception<ns3::Ns3AiRuntimeError>(m, "Ns3AiRuntimeError", PyExc_Exception);
-    py::register_exception<ns3::Ns3AiTimeoutError>(m, "Ns3AiTimeoutError", PyExc_Exception);
-    py::register_exception<ns3::Ns3AiProtocolError>(m, "Ns3AiProtocolError", PyExc_Exception);
-    py::register_exception<ns3::Ns3AiSchemaError>(m, "Ns3AiSchemaError", PyExc_Exception);
-
+    ns3::BindNs3AiErrorTypes(m);
     using GymMsgInterface = ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
 
     m.attr("msg_buffer_size") = MSG_BUFFER_SIZE;

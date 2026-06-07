@@ -1,4 +1,5 @@
 pybind11_add_module(ns3ai_gym_msg_py msg_py_binding.cc)
+target_include_directories(ns3ai_gym_msg_py PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../msg-interface)
 set_target_properties(ns3ai_gym_msg_py PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${NS3AI_PYTHON_PACKAGE_BUILD_DIR})
 

@@ -30,7 +30,7 @@ OpenGymVectorEnv::OpenGymVectorEnv(uint32_t numEnvs)
     NS_LOG_FUNCTION(this << numEnvs);
     if (numEnvs == 0)
     {
-        throw std::invalid_argument("OpenGymVectorEnv requires at least one environment");
+        throw Ns3AiRuntimeError("OpenGymVectorEnv requires at least one environment");
     }
     m_interfaces.resize(m_numEnvs);
 }
@@ -59,7 +59,7 @@ OpenGymVectorEnv::SetNumEnvs(uint32_t numEnvs)
     NS_LOG_FUNCTION(this << numEnvs);
     if (numEnvs == 0)
     {
-        throw std::invalid_argument("OpenGymVectorEnv requires at least one environment");
+        throw Ns3AiRuntimeError("OpenGymVectorEnv requires at least one environment");
     }
     if (!m_interfaces.empty() && m_interfaces.size() != m_numEnvs)
     {
@@ -93,7 +93,7 @@ OpenGymVectorEnv::SetOpenGymInterfaces(const std::vector<Ptr<OpenGymInterface>>&
         std::ostringstream oss;
         oss << "OpenGymVectorEnv number of provided OpenGymInterface instances (" << interfaces.size()
             << ") does not match numEnvs (" << m_numEnvs << ")";
-        throw std::invalid_argument(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
     for (uint32_t envIndex = 0; envIndex < m_numEnvs; ++envIndex)
     {
@@ -263,7 +263,7 @@ OpenGymVectorEnv::ValidateEnvIndex(uint32_t envIndex) const
     {
         std::ostringstream oss;
         oss << "OpenGymVectorEnv index " << envIndex << " out of range [0, " << m_numEnvs << ")";
-        throw std::out_of_range(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
 }
 
@@ -275,7 +275,7 @@ OpenGymVectorEnv::BindInterface(uint32_t envIndex, Ptr<OpenGymInterface> interfa
     {
         std::ostringstream oss;
         oss << "OpenGymVectorEnv cannot bind a null OpenGymInterface at index " << envIndex;
-        throw std::invalid_argument(oss.str());
+        throw Ns3AiRuntimeError(oss.str());
     }
     m_interfaces[envIndex] = interface;
 }

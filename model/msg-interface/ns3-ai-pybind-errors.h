@@ -35,11 +35,11 @@ namespace py = pybind11;
 inline void
 BindNs3AiErrorTypes(py::module_& module)
 {
-    py::register_exception<Ns3AiError>(module, "Ns3AiError", PyExc_Exception);
-    py::register_exception<Ns3AiRuntimeError>(module, "Ns3AiRuntimeError", PyExc_Exception);
-    py::register_exception<Ns3AiTimeoutError>(module, "Ns3AiTimeoutError", PyExc_Exception);
-    py::register_exception<Ns3AiProtocolError>(module, "Ns3AiProtocolError", PyExc_Exception);
-    py::register_exception<Ns3AiSchemaError>(module, "Ns3AiSchemaError", PyExc_Exception);
+    auto ns3AiError = py::register_exception<Ns3AiError>(module, "Ns3AiError", PyExc_Exception);
+    py::register_exception<Ns3AiRuntimeError>(module, "Ns3AiRuntimeError", ns3AiError.ptr());
+    py::register_exception<Ns3AiTimeoutError>(module, "Ns3AiTimeoutError", ns3AiError.ptr());
+    py::register_exception<Ns3AiProtocolError>(module, "Ns3AiProtocolError", ns3AiError.ptr());
+    py::register_exception<Ns3AiSchemaError>(module, "Ns3AiSchemaError", ns3AiError.ptr());
 }
 
 } // namespace ns3
