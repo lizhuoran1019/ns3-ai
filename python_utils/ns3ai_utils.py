@@ -179,6 +179,11 @@ class Ns3AiMsgInterface:
     def acknowledge_close(self):
         return self._raw_interface.AcknowledgeClose(Peer.Py)
 
+    def CheckGenerationId(self, generation_id, peer):
+        if not isinstance(peer, Peer):
+            raise TypeError('ns3ai_utils: peer must be a Peer enum value')
+        return self._raw_interface.CheckGenerationId(generation_id, peer)
+
     def _call_raw(self, method_name):
         try:
             return getattr(self._raw_interface, method_name)()
@@ -257,10 +262,7 @@ def _module_default(value, module, attr, fallback=0):
 
 
 def _resolve_ns3_path(ns3_path):
-    if os.path.isabs(ns3_path):
-        return os.path.abspath(ns3_path)
-    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    return os.path.abspath(os.path.join(script_dir, ns3_path))
+    return os.path.abspath(ns3_path)
 
 
 def run_single_ns3(path, pname, setting=None, env=None, show_output=False):

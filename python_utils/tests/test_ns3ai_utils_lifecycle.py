@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
+import os
 
-import ns3ai_utils
 from ns3ai_utils import CloseReason
 from ns3ai_utils import ErrorReason
 from ns3ai_utils import Experiment
@@ -80,6 +80,10 @@ class FakeMessageInterface:
     def GetPy2CppVector(self):
         return self.py2cpp_vector
 
+    def CheckGenerationId(self, generation_id, peer):
+        self.calls.append(("CheckGenerationId", generation_id, peer))
+        return generation_id == 202
+
 
 class FailingMessageInterface(FakeMessageInterface):
     def __init__(self, session_state):
@@ -143,9 +147,19 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         self.assertIs(interface.GetPy2CppStruct(), raw_interface.py2cpp_struct)
         self.assertIs(interface.GetCpp2PyVector(), raw_interface.cpp2py_vector)
         self.assertIs(interface.GetPy2CppVector(), raw_interface.py2cpp_vector)
+        self.assertTrue(interface.CheckGenerationId(202, Peer.Py))
+        with self.assertRaises(TypeError):
+            interface.CheckGenerationId(202, "Py")
         self.assertEqual(
             raw_interface.calls,
-            ["PyRecvBegin", "PyRecvEnd", "PySendBegin", "PySendEnd", "PyGetFinished"],
+            [
+                "PyRecvBegin",
+                "PyRecvEnd",
+                "PySendBegin",
+                "PySendEnd",
+                "PyGetFinished",
+                ("CheckGenerationId", 202, Peer.Py),
+            ],
         )
 
     def test_wait_ready_succeeds_for_ready_or_running_session(self):
@@ -181,20 +195,25 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         with self.assertRaises(Ns3AiSessionTimeoutError):
             interface.wait_ready(timeout=0)
 
-    def test_close_handshake_uses_python_peer_and_requires_close_reason_enum(self):
+    def test_close_wrapper_uses_python_peer_and_requires_close_reason_enum(self):
         raw_interface = FakeMessageInterface()
         interface = Ns3AiMsgInterface(raw_interface)
 
         interface.request_close(CloseReason.UserInterrupted)
-        interface.acknowledge_close()
 
         self.assertEqual(
             raw_interface.calls,
-            [("RequestClose", Peer.Py, CloseReason.UserInterrupted), ("AcknowledgeClose", Peer.Py)],
+            [("RequestClose", Peer.Py, CloseReason.UserInterrupted)],
         )
 
         with self.assertRaises(TypeError):
             interface.request_close("UserInterrupted")
+
+        interface.acknowledge_close()
+        self.assertEqual(
+            raw_interface.calls[-1],
+            ("AcknowledgeClose", Peer.Py),
+        )
 
     def test_delegated_mailbox_error_is_structured_only_when_session_failed(self):
         failed_interface = Ns3AiMsgInterface(FailingMessageInterface(5))
@@ -237,18 +256,11 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         self.assertIn("stdout", str(error.exception))
         self.assertIn("stderr", str(error.exception))
 
-    def test_experiment_resolves_relative_ns3_path_from_executed_script(self):
+    def test_experiment_resolves_relative_ns3_path_from_current_working_directory(self):
         raw_interface = FakeMessageInterface()
         msg_module = FakeMsgModule(raw_interface)
-
-        with mock.patch.object(
-            ns3ai_utils.sys,
-            "argv",
-            ["/repo/contrib/ai/examples/a-plus-b/use-msg-stru/apb.py"],
-        ):
-            experiment = Experiment("target", "../../../../../", msg_module)
-
-        self.assertEqual(experiment.ns3Path, "/repo")
+        experiment = Experiment("target", "../../../../../", msg_module)
+        self.assertEqual(experiment.ns3Path, os.path.abspath("../../../../../"))
 
     def test_wrapper_can_create_or_open_shared_memory_session_from_msg_module(self):
         creator_raw = FakeMessageInterface()
