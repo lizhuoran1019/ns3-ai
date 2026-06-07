@@ -53,8 +53,14 @@ static_assert(sizeof(std::atomic<bool>) == sizeof(bool),
               "std::atomic<bool> 的大小必须等于 bool");
 static_assert(std::atomic<uint8_t>::is_always_lock_free,
               "std::atomic<uint8_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<uint16_t>::is_always_lock_free,
+              "std::atomic<uint16_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<uint32_t>::is_always_lock_free,
+              "std::atomic<uint32_t> 在共享内存中必须为无锁");
 static_assert(std::atomic<uint64_t>::is_always_lock_free,
               "std::atomic<uint64_t> 在共享内存中必须为无锁");
+static_assert(std::atomic<bool>::is_always_lock_free,
+              "std::atomic<bool> 在共享内存中必须为无锁");
 
 static_assert(alignof(std::atomic<uint8_t>) == alignof(uint8_t),
               "std::atomic<uint8_t> 的对齐必须等于 uint8_t");
@@ -216,7 +222,10 @@ static_assert(sizeof(Ns3AiMsgSync) == 14,
  */
 struct Ns3AiMsgProtocolHeader
 {
-    std::atomic<uint32_t> m_magic{NS3_AI_MSG_HEADER_MAGIC};
+    // m_magic 默认 0 表示尚未发布。creator 在 InitializeProtocolHeader 末尾
+    // release-store 正确值作为门闩；opener 在 ValidateProtocolHeader 中
+    // acquire 等待 m_magic != 0 后才读取其他字段。
+    std::atomic<uint32_t> m_magic{0};
     std::atomic<uint16_t> m_abiVersion{NS3_AI_MSG_ABI_VERSION};
     std::atomic<uint16_t> m_headerSize{sizeof(Ns3AiMsgProtocolHeader)};
     std::atomic<uint64_t> m_sessionId{0};
@@ -1069,10 +1078,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     void InitializeProtocolHeader()
     {
-        // 所有 header 字段使用 release store，与 ValidateProtocolHeader 中的
-        // acquire load 配对。m_sessionState = Init 的最终 release store
-        // 作为全局门闩发布整个 header。
-        m_header->m_magic.store(NS3_AI_MSG_HEADER_MAGIC, std::memory_order_release);
+        // 先写入所有 header 字段（release store），最后写入 m_magic 作为发布门闩。
         m_header->m_abiVersion.store(NS3_AI_MSG_ABI_VERSION, std::memory_order_release);
         m_header->m_headerSize.store(sizeof(Ns3AiMsgProtocolHeader), std::memory_order_release);
         m_header->m_sessionId.store(
@@ -1085,6 +1091,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         m_header->m_py2cppSchemaHash.store(m_py2cppSchemaHash, std::memory_order_release);
         m_header->m_cpp2pySchemaVersion.store(m_cpp2pySchemaVersion, std::memory_order_release);
         m_header->m_py2cppSchemaVersion.store(m_py2cppSchemaVersion, std::memory_order_release);
+        // 门闩：m_magic release-store 确保以上所有写入对 opener 可见
+        m_header->m_magic.store(NS3_AI_MSG_HEADER_MAGIC, std::memory_order_release);
     };
 
     void ValidateProtocolHeader() const
@@ -1095,6 +1103,19 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
             oss << "ns3-ai message interface could not find protocol header '" << m_headerName << "'.";
             throw std::runtime_error(oss.str());
         }
+
+        // 等待 creator 完成 InitializeProtocolHeader 的发布门闩：m_magic 默认 0，
+        // creator 在所有 header 字段写入完成后的最后一步 release-store 正确值。
+        {
+            // 等待 creator 完成 InitializeProtocolHeader 的发布门闩：m_magic 默认 0，
+            // creator 在所有 header 字段写入完成后的最后一步 release-store 正确值。
+            uint32_t attempts = 0;
+            while (m_header->m_magic.load(std::memory_order_acquire) == 0)
+            {
+                Ns3AiSemaphore::Backoff(attempts++);
+            }
+        }
+
         if (m_header->m_magic.load(std::memory_order_acquire) != NS3_AI_MSG_HEADER_MAGIC ||
             m_header->m_abiVersion.load(std::memory_order_acquire) != NS3_AI_MSG_ABI_VERSION ||
             m_header->m_headerSize.load(std::memory_order_acquire) != sizeof(Ns3AiMsgProtocolHeader))
@@ -1171,9 +1192,15 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
         if (result == Ns3AiSemaphore::WaitResult::Aborted)
         {
-            // 对端完成是正常结束，不标记错误、不抛异常
+            // blocking API 被对端 finish 中止：Begin 已切换 peer state 但未拿到资源，
+            // 必须抛异常避免调用者误以为成功。
             SetPeerState(peer, Ns3AiMsgPeerState::Finished);
-            return;
+            std::ostringstream oss;
+            oss << "ns3-ai message interface aborted in " << operation
+                << " for " << PeerName(peer) << " peer: the peer has finished. "
+                << "Current states: C++=" << StateName(GetPeerState(Ns3AiMsgPeer::Cpp))
+                << ", Python=" << StateName(GetPeerState(Ns3AiMsgPeer::Py)) << ".";
+            throw std::runtime_error(oss.str());
         }
         MarkPeerError(peer, Ns3AiMsgErrorReason::Timeout);
         ThrowSyncFailure(operation, waitTarget, peer, counter);

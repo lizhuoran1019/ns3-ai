@@ -159,7 +159,9 @@ struct Ns3AiSemaphore
         return mem->exchange(1, std::memory_order_release);
     }
 
-  private:
+    /**
+     * 忙等待回退策略：yield → 50μs sleep → 1ms sleep。
+     */
     static inline void Backoff(uint32_t attempts)
     {
         if (attempts < 64)
