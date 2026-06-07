@@ -559,6 +559,47 @@ class CompatibilityWarningVisibleOnStderrTestCase : public TestCase
     }
 };
 
+/**
+ * \brief Disabled 模式 warning 文本通过 stderr 输出。
+ */
+class DisabledModeWarningVisibleOnStderrTestCase : public TestCase
+{
+  public:
+    DisabledModeWarningVisibleOnStderrTestCase()
+        : TestCase("disabled mode warning visible on stderr")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("disabled-warning-stderr"));
+        RemoveSegment(names);
+
+        std::ostringstream captured;
+        auto oldBuf = std::cerr.rdbuf(captured.rdbuf());
+
+        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str(),
+            0, 0, 0, 0,
+            Ns3AiSchemaValidationMode::Disabled);
+
+        std::cerr.rdbuf(oldBuf);
+
+        const std::string output = captured.str();
+        NS_TEST_EXPECT_MSG_NE(output.find("schema validation is disabled"), std::string::npos,
+                              "disabled warning contains 'schema validation is disabled'");
+        NS_TEST_EXPECT_MSG_NE(output.find("Layout drift"), std::string::npos,
+                              "disabled warning mentions Layout drift");
+    }
+};
+
 class Ns3AiSchemaValidationTestSuite : public TestSuite
 {
   public:
@@ -574,6 +615,7 @@ class Ns3AiSchemaValidationTestSuite : public TestSuite
         AddTestCase(new DisabledModeMismatchAllowsOpenTestCase, TestCase::QUICK);
         AddTestCase(new StrictModePeerActualMissingMetadataTestCase, TestCase::QUICK);
         AddTestCase(new CompatibilityWarningVisibleOnStderrTestCase, TestCase::QUICK);
+        AddTestCase(new DisabledModeWarningVisibleOnStderrTestCase, TestCase::QUICK);
     }
 };
 

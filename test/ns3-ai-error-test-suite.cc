@@ -170,7 +170,7 @@ class AccessModeVectorCallStructGetterTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
         Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
             false, true, false,
             4096,
@@ -179,7 +179,7 @@ class AccessModeVectorCallStructGetterTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
 
         // vector 模式掉用 struct getter → Ns3AiProtocolError
         bool caughtProtocolError = false;
@@ -238,7 +238,7 @@ class AccessModeStructCallVectorGetterTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
         Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
             false, false, false,
             4096,
@@ -247,7 +247,7 @@ class AccessModeStructCallVectorGetterTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
 
         // struct 模式下调 vector getter → Ns3AiProtocolError
         bool caughtProtocolError = false;
@@ -305,7 +305,7 @@ class OpenOnlyMissingVectorObjectTestCase : public TestCase
             "vec-py2cpp",
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
 
         // Opener: vector 模式，msg 名称 "other-cpp2py"/"other-py2cpp"（不同）→ 找不到
         bool caught = false;
@@ -319,7 +319,7 @@ class OpenOnlyMissingVectorObjectTestCase : public TestCase
                 "other-py2cpp",
                 names.m_lockableName.c_str(),
                 1000000,
-                names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+                names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
         }
         catch (const Ns3AiRuntimeError&)
         {
@@ -358,7 +358,7 @@ class OpenOnlyMissingStructObjectTestCase : public TestCase
             "stru-py2cpp",
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
 
         bool caught = false;
         try
@@ -371,7 +371,7 @@ class OpenOnlyMissingStructObjectTestCase : public TestCase
                 "other-py2cpp",
                 names.m_lockableName.c_str(),
                 1000000,
-                names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+                names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
         }
         catch (const Ns3AiRuntimeError&)
         {
@@ -409,7 +409,7 @@ class OpenOnlyMissingSyncObjectTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             "my-lock",
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
 
         bool caught = false;
         try
@@ -422,7 +422,7 @@ class OpenOnlyMissingSyncObjectTestCase : public TestCase
                 names.m_py2cppMsgName.c_str(),
                 "other-lock",
                 1000000,
-                names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+                names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
         }
         catch (const Ns3AiRuntimeError&)
         {
@@ -462,8 +462,8 @@ class OpenOnlyMissingHeaderObjectTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000000,
             "my-hdr",
-            0, 0, 0, 0,
-            Ns3AiSchemaValidationMode::Compatibility);
+            0x1111, 0x2222, 1, 1,
+            Ns3AiSchemaValidationMode::Strict);
 
         bool caught = false;
         try
@@ -477,8 +477,8 @@ class OpenOnlyMissingHeaderObjectTestCase : public TestCase
                 names.m_lockableName.c_str(),
                 1000000,
                 "other-hdr",
-                0, 0, 0, 0,
-                Ns3AiSchemaValidationMode::Compatibility);
+                0x1111, 0x2222, 1, 1,
+                Ns3AiSchemaValidationMode::Strict);
         }
         catch (const Ns3AiRuntimeError&)
         {
@@ -597,7 +597,7 @@ class FinishHandlingNotConfiguredTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
         Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
             false, false, false,
             4096,
@@ -606,7 +606,7 @@ class FinishHandlingNotConfiguredTestCase : public TestCase
             names.m_py2cppMsgName.c_str(),
             names.m_lockableName.c_str(),
             1000000,
-            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
 
         // CppSetFinished (void) → throw
         bool caught = false;
