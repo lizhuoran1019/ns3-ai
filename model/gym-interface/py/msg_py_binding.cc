@@ -23,8 +23,6 @@
 
 #include <pybind11/pybind11.h>
 
-#include <stdexcept>
-
 namespace py = pybind11;
 
 namespace
@@ -35,7 +33,7 @@ ValidateGymMsgSize(const Ns3AiGymMsg& msg)
 {
     if (msg.size > MSG_BUFFER_SIZE)
     {
-        throw std::runtime_error("ns3-ai Gym message size exceeds the configured buffer size");
+        throw ns3::Ns3AiRuntimeError("ns3-ai Gym message size exceeds the configured buffer size");
     }
 }
 
