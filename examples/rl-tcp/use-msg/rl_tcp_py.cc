@@ -63,7 +63,7 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
                       uint64_t,
                       uint64_t,
                       uint32_t,
-                      uint32_t>(),
+                      uint32_t, ns3::Ns3AiSchemaValidationMode>(),
              py::arg("is_memory_creator"),
              py::arg("use_vector"),
              py::arg("handle_finish"),
@@ -77,7 +77,8 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
              py::arg("cpp2py_schema_hash") = 0,
              py::arg("py2cpp_schema_hash") = 0,
              py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0)
+             py::arg("py2cpp_schema_version") = 0,
+py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
                  return static_cast<uint8_t>(interface.GetSessionState());

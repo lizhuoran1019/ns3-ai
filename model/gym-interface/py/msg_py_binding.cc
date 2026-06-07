@@ -75,7 +75,8 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
                       uint64_t,
                       uint64_t,
                       uint32_t,
-                      uint32_t>(),
+                      uint32_t,
+                      ns3::Ns3AiSchemaValidationMode>(),
              py::arg("is_memory_creator"),
              py::arg("use_vector"),
              py::arg("handle_finish"),
@@ -89,7 +90,8 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
              py::arg("cpp2py_schema_hash") = NS3_AI_GYM_MSG_SCHEMA_HASH,
              py::arg("py2cpp_schema_hash") = NS3_AI_GYM_MSG_SCHEMA_HASH,
              py::arg("cpp2py_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION,
-             py::arg("py2cpp_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION)
+             py::arg("py2cpp_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION,
+             py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const GymMsgInterface& interface) {
                  return static_cast<uint8_t>(interface.GetSessionState());
