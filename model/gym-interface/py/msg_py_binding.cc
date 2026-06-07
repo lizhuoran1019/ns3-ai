@@ -44,6 +44,12 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
     ns3::BindNs3AiErrorTypes(m);
     using GymMsgInterface = ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
 
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+        .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
+        .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
+        .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
+        .export_values();
+
     m.attr("msg_buffer_size") = MSG_BUFFER_SIZE;
     m.attr("default_sync_timeout_us") = GymMsgInterface::DEFAULT_SYNC_TIMEOUT_US;
     m.attr("schema_hash") = py::int_(NS3_AI_GYM_MSG_SCHEMA_HASH);

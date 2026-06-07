@@ -128,6 +128,9 @@ class Ns3AiMsgInterface:
         cpp2py_schema_version = _module_default(cpp2py_schema_version, msg_module, 'schema_version')
         py2cpp_schema_version = _module_default(py2cpp_schema_version, msg_module, 'schema_version')
         mode = _parse_schema_validation_mode(schema_validation_mode)
+        mode_enum = (getattr(msg_module, 'Ns3AiSchemaValidationMode')(int(mode))
+                     if hasattr(msg_module, 'Ns3AiSchemaValidationMode')
+                     else int(mode))
         return cls(msg_module.Ns3AiMsgInterfaceImpl(
             is_memory_creator,
             use_vector,
@@ -143,7 +146,7 @@ class Ns3AiMsgInterface:
             py2cpp_schema_hash,
             cpp2py_schema_version,
             py2cpp_schema_version,
-            int(mode),
+            mode_enum,
         ),
                    ns3ai_error_type=getattr(msg_module, 'Ns3AiError', None))
 

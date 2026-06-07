@@ -34,6 +34,11 @@ PYBIND11_MAKE_OPAQUE(ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsg
 PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 {
     ns3::BindNs3AiErrorTypes(m);
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+        .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
+        .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
+        .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
+        .export_values();
     py::class_<EnvStruct>(m, "PyEnvStruct")
         .def(py::init<>())
         .def_readwrite("a", &EnvStruct::env_a)

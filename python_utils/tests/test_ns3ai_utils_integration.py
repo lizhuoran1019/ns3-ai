@@ -38,6 +38,7 @@ class Ns3AiMsgInterfaceIntegrationTest(unittest.TestCase):
             lockable_name=names["lockableName"],
             header_name=names["headerName"],
             sync_timeout_us=1000,
+            schema_validation_mode="compatibility",
         )
         opener = Ns3AiMsgInterface.open(
             real_msg_module,
@@ -47,6 +48,7 @@ class Ns3AiMsgInterfaceIntegrationTest(unittest.TestCase):
             lockable_name=names["lockableName"],
             header_name=names["headerName"],
             sync_timeout_us=1000,
+            schema_validation_mode="compatibility",
         )
         return creator, opener
 
