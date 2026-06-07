@@ -5,6 +5,8 @@ from ns3ai_gym_env import messages_pb2 as pb
 from ns3ai_gym_env import ns3ai_gym_msg_py as py_binding
 from ns3ai_utils import Experiment
 
+DEFAULT_GYM_SHM_SIZE = 1048576
+
 
 class Ns3Env(gym.Env):
     def _ensure_msg_fits(self, payload, message_name):
@@ -307,7 +309,7 @@ class Ns3Env(gym.Env):
                  targetName,
                  ns3Path,
                  ns3Settings=None,
-                 shmSize=4096,
+                 shmSize=DEFAULT_GYM_SHM_SIZE,
                  envId=None,
                  shmPrefix=None,
                  env=None,

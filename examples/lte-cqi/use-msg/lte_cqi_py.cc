@@ -35,9 +35,9 @@ PYBIND11_MODULE(ns3ai_ltecqi_py, m)
         .def(py::init<>())
         .def_readwrite("new_wbCqi", &ns3::CqiPredicted::new_wbCqi);
 
-    py::class_<ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>>(
-        m,
-        "Ns3AiMsgInterfaceImpl")
+    using MsgInterface = ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>;
+
+    py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl")
         .def(py::init<bool,
                       bool,
                       bool,
@@ -45,21 +45,68 @@ PYBIND11_MODULE(ns3ai_ltecqi_py, m)
                       const char*,
                       const char*,
                       const char*,
-                      const char*>())
-        .def("PyRecvBegin",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::PyRecvBegin)
-        .def("PyRecvEnd",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::PyRecvEnd)
-        .def("PySendBegin",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::PySendBegin)
-        .def("PySendEnd",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::PySendEnd)
-        .def("PyGetFinished",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::PyGetFinished)
+                      const char*,
+                      uint64_t,
+                      const char*,
+                      uint64_t,
+                      uint64_t,
+                      uint32_t,
+                      uint32_t>(),
+             py::arg("is_memory_creator"),
+             py::arg("use_vector"),
+             py::arg("handle_finish"),
+             py::arg("size") = 4096,
+             py::arg("segment_name") = "My Seg",
+             py::arg("cpp2py_msg_name") = "My Cpp to Python Msg",
+             py::arg("py2cpp_msg_name") = "My Python to Cpp Msg",
+             py::arg("lockable_name") = "My Lockable",
+             py::arg("sync_timeout_us") = MsgInterface::DEFAULT_SYNC_TIMEOUT_US,
+             py::arg("header_name") = "My Header",
+             py::arg("cpp2py_schema_hash") = 0,
+             py::arg("py2cpp_schema_hash") = 0,
+             py::arg("cpp2py_schema_version") = 0,
+             py::arg("py2cpp_schema_version") = 0)
+        .def("GetSessionState",
+             [](const MsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetSessionState());
+             })
+        .def("GetSessionId", &MsgInterface::GetSessionId)
+        .def("GetGenerationId", &MsgInterface::GetGenerationId)
+        .def("GetCloseReason",
+             [](const MsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetCloseReason());
+             })
+        .def("GetErrorReason",
+             [](const MsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetErrorReason());
+             })
+        .def("GetLastErrorPeer",
+             [](const MsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetLastErrorPeer());
+             })
+        .def("RequestClose",
+             [](const MsgInterface& interface, uint8_t peer, uint8_t reason) {
+                 interface.RequestClose(static_cast<ns3::Ns3AiMsgPeer>(peer),
+                                        static_cast<ns3::Ns3AiMsgCloseReason>(reason));
+             })
+        .def("AcknowledgeClose",
+             [](const MsgInterface& interface, uint8_t peer) {
+                 interface.AcknowledgeClose(static_cast<ns3::Ns3AiMsgPeer>(peer));
+             })
+        .def("CheckGenerationId",
+             [](const MsgInterface& interface, uint64_t generationId, uint8_t peer) {
+                 return interface.CheckGenerationId(generationId,
+                                                    static_cast<ns3::Ns3AiMsgPeer>(peer));
+             })
+        .def("PyRecvBegin", &MsgInterface::PyRecvBegin)
+        .def("PyRecvEnd", &MsgInterface::PyRecvEnd)
+        .def("PySendBegin", &MsgInterface::PySendBegin)
+        .def("PySendEnd", &MsgInterface::PySendEnd)
+        .def("PyGetFinished", &MsgInterface::PyGetFinished)
         .def("GetCpp2PyStruct",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::GetCpp2PyStruct,
+             &MsgInterface::GetCpp2PyStruct,
              py::return_value_policy::reference)
         .def("GetPy2CppStruct",
-             &ns3::Ns3AiMsgInterfaceImpl<ns3::CqiFeature, ns3::CqiPredicted>::GetPy2CppStruct,
+             &MsgInterface::GetPy2CppStruct,
              py::return_value_policy::reference);
 }

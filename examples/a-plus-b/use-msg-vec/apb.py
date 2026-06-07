@@ -32,14 +32,21 @@ try:
         # receive from C++ side
         msgInterface.PyRecvBegin()
         if msgInterface.PyGetFinished():
+            msgInterface.PyRecvEnd()
             break
+
+        sums = []
+        for i in range(len(msgInterface.GetCpp2PyVector())):
+            sums.append(
+                msgInterface.GetCpp2PyVector()[i].a +
+                msgInterface.GetCpp2PyVector()[i].b
+            )
+        msgInterface.PyRecvEnd()
 
         # send to C++ side
         msgInterface.PySendBegin()
-        for i in range(len(msgInterface.GetCpp2PyVector())):
-            # calculate the sums
-            msgInterface.GetPy2CppVector()[i].c = msgInterface.GetCpp2PyVector()[i].a + msgInterface.GetCpp2PyVector()[i].b
-        msgInterface.PyRecvEnd()
+        for i, value in enumerate(sums):
+            msgInterface.GetPy2CppVector()[i].c = value
         msgInterface.PySendEnd()
 
 except Exception as e:

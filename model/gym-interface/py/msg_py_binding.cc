@@ -89,6 +89,38 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
              py::arg("py2cpp_schema_hash") = NS3_AI_GYM_MSG_SCHEMA_HASH,
              py::arg("cpp2py_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION,
              py::arg("py2cpp_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION)
+        .def("GetSessionState",
+             [](const GymMsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetSessionState());
+             })
+        .def("GetSessionId", &GymMsgInterface::GetSessionId)
+        .def("GetGenerationId", &GymMsgInterface::GetGenerationId)
+        .def("GetCloseReason",
+             [](const GymMsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetCloseReason());
+             })
+        .def("GetErrorReason",
+             [](const GymMsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetErrorReason());
+             })
+        .def("GetLastErrorPeer",
+             [](const GymMsgInterface& interface) {
+                 return static_cast<uint8_t>(interface.GetLastErrorPeer());
+             })
+        .def("RequestClose",
+             [](const GymMsgInterface& interface, uint8_t peer, uint8_t reason) {
+                 interface.RequestClose(static_cast<ns3::Ns3AiMsgPeer>(peer),
+                                        static_cast<ns3::Ns3AiMsgCloseReason>(reason));
+             })
+        .def("AcknowledgeClose",
+             [](const GymMsgInterface& interface, uint8_t peer) {
+                 interface.AcknowledgeClose(static_cast<ns3::Ns3AiMsgPeer>(peer));
+             })
+        .def("CheckGenerationId",
+             [](const GymMsgInterface& interface, uint64_t generationId, uint8_t peer) {
+                 return interface.CheckGenerationId(generationId,
+                                                    static_cast<ns3::Ns3AiMsgPeer>(peer));
+             })
         .def("PyRecvBegin", &GymMsgInterface::PyRecvBegin)
         .def("PyRecvEnd", &GymMsgInterface::PyRecvEnd)
         .def("PySendBegin", &GymMsgInterface::PySendBegin)
