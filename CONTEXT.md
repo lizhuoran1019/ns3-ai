@@ -92,6 +92,26 @@ _Avoid_: 魔法整数、自由格式原因字符串
 ns3-ai 提供的 Python 端包装层，为一个共享内存消息接口提供规范的 Python API，同时将载荷访问和邮箱操作委托给生成的 pybind 消息接口对象。
 _Avoid_: 原始 pybind 接口、以生成绑定作为规范 Python API
 
+### 校验模式
+
+**严格模式（Strict Mode）**：
+schema hash/version 必须非零且两端相等，缺失或 mismatch → 报错失败。Ns3AiSchemaValidationMode::Strict。
+_Avoid_: 宽松校验、自动兼容
+
+**兼容模式（Compatibility Mode）**：
+允许一端缺失 metadata → 输出 deprecation warning；双方都非零时 mismatch 仍报错失败。Ns3AiSchemaValidationMode::Compatibility。
+_Avoid_: 跳过校验、静默兼容
+
+**禁用模式（Disabled Mode）**：
+完全跳过 schema 校验 → 输出 visible warning。Ns3AiSchemaValidationMode::Disabled。
+_Avoid_: 关闭告警、静默跳过
+
+### 测试接缝
+
+**测试接缝（Test Seam）**：
+PRD #52 定义的跨语言兼容性测试分层，按隔离程度从低到高：L0 C++ headless 单元测试、L1 Python wrapper 单元测试（mock 后端）、L2 Python 集成测试（同进程真实共享内存）、L3 Gym protocol 测试（仅未来引入 Gym protocol 兼容性时适用）。按 seam 分层保证测试不依赖外部进程且不互相干扰。
+_Avoid_: 端到端集成测试作为唯一验证手段
+
 ### 模式元数据
 
 **模式哈希（Schema Hash）**：
