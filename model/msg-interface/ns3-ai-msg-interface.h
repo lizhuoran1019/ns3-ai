@@ -1353,16 +1353,39 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
         WaitForHeaderPublished();
 
-        if (m_header->m_magic.load(std::memory_order_acquire) != NS3_AI_MSG_HEADER_MAGIC ||
-            m_header->m_abiVersion.load(std::memory_order_acquire) != NS3_AI_MSG_ABI_VERSION ||
-            m_header->m_headerSize.load(std::memory_order_acquire) != sizeof(Ns3AiMsgProtocolHeader))
+        // Phase 1: 基础 header layout 校验。
+        // m_sync layout 在此阶段尚不可信（ABI version / header size mismatch 意味着
+        // 对端可能使用了不同的 struct 定义），因此不调用 MarkPeerError 写入 m_sync。
+        const auto actualMagic = m_header->m_magic.load(std::memory_order_acquire);
+        if (actualMagic != NS3_AI_MSG_HEADER_MAGIC)
         {
-            ThrowProtocolHeaderFailure("header magic, ABI version, or size mismatch");
+            ThrowMagicMismatch(NS3_AI_MSG_HEADER_MAGIC, actualMagic);
         }
+        const auto actualAbi = m_header->m_abiVersion.load(std::memory_order_acquire);
+        if (actualAbi != NS3_AI_MSG_ABI_VERSION)
+        {
+            ThrowAbiVersionMismatch(NS3_AI_MSG_ABI_VERSION, actualAbi);
+        }
+        const auto actualHeaderSize = m_header->m_headerSize.load(std::memory_order_acquire);
+        if (actualHeaderSize != sizeof(Ns3AiMsgProtocolHeader))
+        {
+            ThrowHeaderSizeMismatch(sizeof(Ns3AiMsgProtocolHeader), actualHeaderSize);
+        }
+
+        // Phase 2: payload size 校验——至此 header layout 已验证兼容，可安全访问 m_sync
         if (m_header->m_cpp2pyPayloadSize.load(std::memory_order_acquire) != sizeof(Cpp2PyMsgType) ||
             m_header->m_py2cppPayloadSize.load(std::memory_order_acquire) != sizeof(Py2CppMsgType))
         {
-            ThrowProtocolHeaderFailure("payload size mismatch");
+            MarkPeerError(m_isCreator ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp,
+                          Ns3AiMsgErrorReason::ProtocolMismatch);
+            std::ostringstream oss;
+            oss << "ns3-ai message interface payload size mismatch for '" << m_headerName
+                << "': Cpp2PyType=" << sizeof(Cpp2PyMsgType)
+                << " vs " << m_header->m_cpp2pyPayloadSize.load(std::memory_order_acquire)
+                << ", Py2CppType=" << sizeof(Py2CppMsgType)
+                << " vs " << m_header->m_py2cppPayloadSize.load(std::memory_order_acquire)
+                << ". Both peers must use the same message struct definitions.";
+            throw Ns3AiProtocolError(oss.str());
         }
 
         ValidateSchemaField("cpp2py", "schema_hash",
@@ -1461,14 +1484,34 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         }
     };
 
-    [[noreturn]] void ThrowProtocolHeaderFailure(const char* reason) const
+    /** Phase 1 header 校验专用 throw：不调用 MarkPeerError（m_sync layout 尚不可信）。 */
+    [[noreturn]] void ThrowMagicMismatch(uint32_t expected, uint32_t actual) const
     {
-        // creator 视角：错误来自 opener（Py）；opener 视角：错误来自 creator（Cpp）
-        MarkPeerError(m_isCreator ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp,
-                      Ns3AiMsgErrorReason::ProtocolMismatch);
         std::ostringstream oss;
-        oss << "ns3-ai message interface protocol header validation failed for '" << m_headerName
-            << "': " << reason << ". Check that both peers use the same message schema and ABI.";
+        oss << "ns3-ai message interface header magic mismatch for '" << m_headerName
+            << "': expected=0x" << std::hex << expected << " actual=0x" << actual << std::dec
+            << ". The shared-memory segment may belong to a different ns3-ai version "
+               "or may not be an ns3-ai segment.";
+        throw Ns3AiProtocolError(oss.str());
+    };
+
+    /** Phase 1 header 校验专用 throw：不调用 MarkPeerError（m_sync layout 尚不可信）。 */
+    [[noreturn]] void ThrowAbiVersionMismatch(uint16_t expected, uint16_t actual) const
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai message interface ABI version mismatch for '" << m_headerName
+            << "': expected=" << expected << " actual=" << actual
+            << ". Both peers must use the same ns3-ai build.";
+        throw Ns3AiProtocolError(oss.str());
+    };
+
+    /** Phase 1 header 校验专用 throw：不调用 MarkPeerError（m_sync layout 尚不可信）。 */
+    [[noreturn]] void ThrowHeaderSizeMismatch(uint16_t expected, uint16_t actual) const
+    {
+        std::ostringstream oss;
+        oss << "ns3-ai message interface protocol header size mismatch for '" << m_headerName
+            << "': expected=" << expected << " actual=" << actual
+            << ". Both peers must use the same ns3-ai build.";
         throw Ns3AiProtocolError(oss.str());
     };
 
@@ -1477,10 +1520,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                                                 uint64_t expected,
                                                 uint64_t actual) const
     {
-        // ThrowProtocolHeaderFailure 同理：creator 视角 → opener（Py）出错；
-        // opener 视角 → creator（Cpp）写了不一致的 metadata
-        MarkPeerError(m_isCreator ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp,
-                      Ns3AiMsgErrorReason::ProtocolMismatch);
+        // 注意：schema mismatch 可能是本地配置错误而非对端问题，因此不按 m_isCreator
+        // 归咎对端。当前固定归咎 Py，待 #59 明确语义后重新评估。
+        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
         std::ostringstream oss;
         oss << "ns3-ai message interface schema validation failed:\n"
             << "direction=" << direction << "\n"
