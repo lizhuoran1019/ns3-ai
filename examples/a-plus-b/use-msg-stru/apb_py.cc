@@ -28,6 +28,25 @@
 
 namespace py = pybind11;
 
+namespace ns3
+{
+
+template <>
+struct Ns3AiMsgTypeSchemaDefaults<EnvStruct>
+{
+    static constexpr uint64_t SchemaHash = ENV_STRUCT_SCHEMA_HASH;
+    static constexpr uint32_t SchemaVersion = ENV_STRUCT_SCHEMA_VERSION;
+};
+
+template <>
+struct Ns3AiMsgTypeSchemaDefaults<ActStruct>
+{
+    static constexpr uint64_t SchemaHash = ACT_STRUCT_SCHEMA_HASH;
+    static constexpr uint32_t SchemaVersion = ACT_STRUCT_SCHEMA_VERSION;
+};
+
+} // namespace ns3
+
 PYBIND11_MODULE(ns3ai_apb_py_stru, m)
 {
     ns3::BindNs3AiErrorTypes(m);
@@ -70,10 +89,10 @@ PYBIND11_MODULE(ns3ai_apb_py_stru, m)
              py::arg("lockable_name") = "My Lockable",
              py::arg("sync_timeout_us") = MsgInterface::DEFAULT_SYNC_TIMEOUT_US,
              py::arg("header_name") = "My Header",
-             py::arg("cpp2py_schema_hash") = 0,
-             py::arg("py2cpp_schema_hash") = 0,
-             py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0,
+             py::arg("cpp2py_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<EnvStruct>::SchemaHash),
+             py::arg("py2cpp_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<ActStruct>::SchemaHash),
+             py::arg("cpp2py_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<EnvStruct>::SchemaVersion,
+             py::arg("py2cpp_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<ActStruct>::SchemaVersion,
              py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
@@ -118,4 +137,11 @@ PYBIND11_MODULE(ns3ai_apb_py_stru, m)
         .def("GetPy2CppStruct",
              &MsgInterface::GetPy2CppStruct,
              py::return_value_policy::reference);
+
+    m.attr("cpp2py_schema_hash") = py::int_(ENV_STRUCT_SCHEMA_HASH);
+    m.attr("py2cpp_schema_hash") = py::int_(ACT_STRUCT_SCHEMA_HASH);
+    m.attr("cpp2py_schema_version") = ENV_STRUCT_SCHEMA_VERSION;
+    m.attr("py2cpp_schema_version") = ACT_STRUCT_SCHEMA_VERSION;
+    m.attr("schema_hash") = py::int_(ENV_STRUCT_SCHEMA_HASH);
+    m.attr("schema_version") = ENV_STRUCT_SCHEMA_VERSION;
 }

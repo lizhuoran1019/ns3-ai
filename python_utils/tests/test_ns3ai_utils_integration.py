@@ -107,6 +107,42 @@ class Ns3AiMsgInterfaceIntegrationTest(unittest.TestCase):
         self.assertEqual(creator.error_reason, ErrorReason.StaleGeneration)
         self.assertEqual(opener.last_error_peer, Peer.Py)
 
+    def test_module_exposes_non_zero_bidirectional_schema_attrs(self):
+        self.assertIsNotNone(real_msg_module)
+        self.assertNotEqual(real_msg_module.cpp2py_schema_hash, 0,
+                            "module exposes non-zero cpp2py_schema_hash")
+        self.assertNotEqual(real_msg_module.py2cpp_schema_hash, 0,
+                            "module exposes non-zero py2cpp_schema_hash")
+        self.assertEqual(real_msg_module.cpp2py_schema_version, 1,
+                         "module exposes cpp2py_schema_version=1")
+        self.assertEqual(real_msg_module.py2cpp_schema_version, 1,
+                         "module exposes py2cpp_schema_version=1")
+
+    def test_strict_mode_works_with_non_zero_default_schema(self):
+        """验证 strict 模式下不传 hash/version 也能正常构造（从 TypeSchemaDefaults 读取非零值）"""
+        prefix = "ns3ai-slice2-strict-{}".format(uuid.uuid4().hex)
+        names = make_shm_names(prefix)
+        creator = Ns3AiMsgInterface.create(
+            real_msg_module,
+            seg_name=names["segName"],
+            cpp2py_msg_name=names["cpp2pyMsgName"],
+            py2cpp_msg_name=names["py2cppMsgName"],
+            lockable_name=names["lockableName"],
+            header_name=names["headerName"],
+            sync_timeout_us=1000,
+        )
+        opener = Ns3AiMsgInterface.open(
+            real_msg_module,
+            seg_name=names["segName"],
+            cpp2py_msg_name=names["cpp2pyMsgName"],
+            py2cpp_msg_name=names["py2cppMsgName"],
+            lockable_name=names["lockableName"],
+            header_name=names["headerName"],
+            sync_timeout_us=1000,
+        )
+        self.assertEqual(creator.session_state, SessionState.Ready)
+        self.assertEqual(opener.session_state, SessionState.Ready)
+
 
 if __name__ == "__main__":
     if _IMPORT_ERROR is not None:
