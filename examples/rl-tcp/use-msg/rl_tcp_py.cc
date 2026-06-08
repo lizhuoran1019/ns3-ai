@@ -79,10 +79,10 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
              py::arg("lockable_name") = "My Lockable",
              py::arg("sync_timeout_us") = MsgInterface::DEFAULT_SYNC_TIMEOUT_US,
              py::arg("header_name") = "My Header",
-             py::arg("cpp2py_schema_hash") = 0,
-             py::arg("py2cpp_schema_hash") = 0,
-             py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0,
+             py::arg("cpp2py_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlEnv>::SchemaHash),
+             py::arg("py2cpp_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlAct>::SchemaHash),
+             py::arg("cpp2py_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlEnv>::SchemaVersion,
+             py::arg("py2cpp_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlAct>::SchemaVersion,
              py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
@@ -127,4 +127,11 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
         .def("GetPy2CppStruct",
              &MsgInterface::GetPy2CppStruct,
              py::return_value_policy::reference);
+
+    m.attr("cpp2py_schema_hash") = py::int_(ns3::TCP_RL_ENV_SCHEMA_HASH);
+    m.attr("py2cpp_schema_hash") = py::int_(ns3::TCP_RL_ACT_SCHEMA_HASH);
+    m.attr("cpp2py_schema_version") = ns3::TCP_RL_ENV_SCHEMA_VERSION;
+    m.attr("py2cpp_schema_version") = ns3::TCP_RL_ACT_SCHEMA_VERSION;
+    m.attr("schema_hash") = py::int_(ns3::TCP_RL_ENV_SCHEMA_HASH);
+    m.attr("schema_version") = ns3::TCP_RL_ENV_SCHEMA_VERSION;
 }
