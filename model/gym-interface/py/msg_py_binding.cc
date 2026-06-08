@@ -44,7 +44,7 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
     ns3::BindNs3AiErrorTypes(m);
     using GymMsgInterface = ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
 
-    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode", py::module_local())
         .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
         .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
         .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)

@@ -28,42 +28,23 @@
 
 namespace py = pybind11;
 
-namespace ns3
-{
-
-template <>
-struct Ns3AiMsgTypeSchemaDefaults<EnvStruct>
-{
-    static constexpr uint64_t SchemaHash = ENV_STRUCT_SCHEMA_HASH;
-    static constexpr uint32_t SchemaVersion = ENV_STRUCT_SCHEMA_VERSION;
-};
-
-template <>
-struct Ns3AiMsgTypeSchemaDefaults<ActStruct>
-{
-    static constexpr uint64_t SchemaHash = ACT_STRUCT_SCHEMA_HASH;
-    static constexpr uint32_t SchemaVersion = ACT_STRUCT_SCHEMA_VERSION;
-};
-
-} // namespace ns3
-
 PYBIND11_MAKE_OPAQUE(ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector);
 PYBIND11_MAKE_OPAQUE(ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector);
 
 PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 {
     ns3::BindNs3AiErrorTypes(m);
-    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode", py::module_local())
         .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
         .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
         .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
         .export_values();
-    py::class_<EnvStruct>(m, "PyEnvStruct")
+    py::class_<EnvStruct>(m, "PyEnvStruct", py::module_local())
         .def(py::init<>())
         .def_readwrite("a", &EnvStruct::env_a)
         .def_readwrite("b", &EnvStruct::env_b);
 
-    py::class_<ActStruct>(m, "PyActStruct").def(py::init<>()).def_readwrite("c", &ActStruct::act_c);
+    py::class_<ActStruct>(m, "PyActStruct", py::module_local()).def(py::init<>()).def_readwrite("c", &ActStruct::act_c);
 
     py::class_<ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector>(m, "PyEnvVector")
         .def(
@@ -109,7 +90,7 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 
     using MsgInterface = ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>;
 
-    py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl")
+    py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl", py::module_local())
         .def(py::init<bool,
                       bool,
                       bool,

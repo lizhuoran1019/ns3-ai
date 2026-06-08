@@ -30,16 +30,16 @@ namespace py = pybind11;
 PYBIND11_MODULE(ns3ai_ltecqi_py, m)
 {
     ns3::BindNs3AiErrorTypes(m);
-    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode", py::module_local())
         .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
         .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
         .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
         .export_values();
-    py::class_<ns3::CqiFeature>(m, "PyEnvStruct")
+    py::class_<ns3::CqiFeature>(m, "PyEnvStruct", py::module_local())
         .def(py::init<>())
         .def_readwrite("wbCqi", &ns3::CqiFeature::wbCqi);
 
-    py::class_<ns3::CqiPredicted>(m, "PyActStruct")
+    py::class_<ns3::CqiPredicted>(m, "PyActStruct", py::module_local())
         .def(py::init<>())
         .def_readwrite("new_wbCqi", &ns3::CqiPredicted::new_wbCqi);
 
