@@ -63,6 +63,9 @@ We also created some **pure C++** examples, which uses C++-based ML frameworks t
 models. They don't rely on interprocess communication, so there is no overhead in serialization
 and interprocess communication. See [using-pure-cpp](docs/using-pure-cpp.md) for details.
 
+See [compatibility](docs/compatibility.md) for the cross-language schema/ABI compatibility strategy
+and validation mode semantics.
+
 ## Examples
 
 Please refer to the README.md in corresponding directories for more information.

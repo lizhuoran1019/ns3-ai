@@ -52,6 +52,10 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 
     m.attr("msg_buffer_size") = MSG_BUFFER_SIZE;
     m.attr("default_sync_timeout_us") = GymMsgInterface::DEFAULT_SYNC_TIMEOUT_US;
+    m.attr("cpp2py_schema_hash") = py::int_(NS3_AI_GYM_MSG_SCHEMA_HASH);
+    m.attr("py2cpp_schema_hash") = py::int_(NS3_AI_GYM_MSG_SCHEMA_HASH);
+    m.attr("cpp2py_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION;
+    m.attr("py2cpp_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION;
     m.attr("schema_hash") = py::int_(NS3_AI_GYM_MSG_SCHEMA_HASH);
     m.attr("schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION;
 
