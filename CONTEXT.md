@@ -125,3 +125,9 @@ _Avoid_: 协议版本号
 **模式元数据（Schema Metadata）**：
 模式哈希与模式版本的统称，在共享内存会话握手期间由 `Ns3AiMsgProtocolHeader` 承载，由 `ValidateProtocolHeader()` 根据 `Ns3AiSchemaValidationMode`（Strict/Compatibility/Disabled）执行校验。模式元数据校验是结构级等值比对，不是协议版本范围协商。
 _Avoid_: 协议兼容性、版本兼容性检查
+
+### ABI 变更门禁
+
+**ABI 变更门禁（ABI Change Gate）**：
+保护共享内存二进制布局的编译期和运行时双层防御。编译期通过 `sizeof`/`alignof` 静态断言锁定 `Ns3AiMsgSync` 和 `Ns3AiMsgProtocolHeader` 的布局；运行时通过 `NS3_AI_MSG_ABI_VERSION` 跨进程校验防止旧 ABI 打开新 ABI 的段。布局变更时必须同时更新版本号和静态断言值。
+_Avoid_: 仅依赖版本号、仅依赖大小检查

@@ -198,6 +198,24 @@ m.attr("schema_version") = ENV_STRUCT_SCHEMA_VERSION;
 
 `NS3_AI_MSG_ABI_VERSION`（当前值：1）仅在共享内存协议头（`Ns3AiMsgProtocolHeader`）或同步区域（`Ns3AiMsgSync`）的二进制布局变化时才需要修改。这是极低频操作，通常只发生在 ns3-ai 核心开发中。
 
+### ABI 变更门禁
+
+修改涉及共享内存 layout 的代码（如向 `Ns3AiMsgSync` 或 `Ns3AiMsgProtocolHeader` 增删字段）时，必须同时触发以下门禁：
+
+1. **编译期静态断言** — 更新 `sizeof` / `alignof` 断言值以匹配新 layout：
+   - `static_assert(sizeof(Ns3AiMsgSync) == N, ...)`
+   - `static_assert(alignof(Ns3AiMsgSync) == M, ...)`
+   - `static_assert(sizeof(Ns3AiMsgProtocolHeader) == N, ...)`
+   - `static_assert(alignof(Ns3AiMsgProtocolHeader) == M, ...)`
+2. **`NS3_AI_MSG_ABI_VERSION` 递增** — 上述断言值变化时，递增版本号
+3. **运行时跨版本诊断** — C++ opener `ValidateProtocolHeader()` 检测 `m_abiVersion` 不匹配时抛出 `Ns3AiProtocolError`，消息中包含具体原因。Python 侧通过 pybind 异常传播获得相同诊断
+4. **跨版本回归测试** — L2 测试通过手工篡改共享内存中 `m_abiVersion` 值来验证错误路径，而非使用不同版本的构建产物
+
+#### 常见误区
+
+- `sizeof` 不变 ≠ ABI 安全。字段重排或同大小类型替换可以绕过大小检查，但静态断言 + ABI version 可以捕获无意的布局修改。极低概率的重构场景由开发者 review 覆盖
+- 只有 `Ns3AiMsgSync` 和 `Ns3AiMsgProtocolHeader` 受此门禁保护；payload struct 的布局保护由 schema metadata 校验覆盖
+
 ---
 
 ## Gym 当前兼容性策略

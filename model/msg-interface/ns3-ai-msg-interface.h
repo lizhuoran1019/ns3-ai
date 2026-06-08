@@ -214,6 +214,8 @@ struct Ns3AiMsgSync
 /* ---- ABI 静态断言：Ns3AiMsgSync 布局锁定 ---- */
 static_assert(sizeof(Ns3AiMsgSync) == 14,
               "Ns3AiMsgSync sizeof 不可改变，否则破坏共享内存布局");
+static_assert(alignof(Ns3AiMsgSync) == 1,
+              "Ns3AiMsgSync alignof 必须为 1（全 uint8_t 字段）");
 
 /**
  * \brief 共享内存协议头。
@@ -242,6 +244,8 @@ struct Ns3AiMsgProtocolHeader
 /* ---- ABI 静态断言：Ns3AiMsgProtocolHeader 布局锁定 ---- */
 static_assert(sizeof(Ns3AiMsgProtocolHeader) == 56,
               "Ns3AiMsgProtocolHeader sizeof 不可改变，否则破坏共享内存布局");
+static_assert(alignof(Ns3AiMsgProtocolHeader) == 8,
+              "Ns3AiMsgProtocolHeader alignof 必须为 8（含 uint64_t 字段）");
 
 enum class Ns3AiMsgFieldType : uint16_t
 {
@@ -1459,7 +1463,9 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
 
     [[noreturn]] void ThrowProtocolHeaderFailure(const char* reason) const
     {
-        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
+        // creator 视角：错误来自 opener（Py）；opener 视角：错误来自 creator（Cpp）
+        MarkPeerError(m_isCreator ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp,
+                      Ns3AiMsgErrorReason::ProtocolMismatch);
         std::ostringstream oss;
         oss << "ns3-ai message interface protocol header validation failed for '" << m_headerName
             << "': " << reason << ". Check that both peers use the same message schema and ABI.";
@@ -1471,7 +1477,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                                                 uint64_t expected,
                                                 uint64_t actual) const
     {
-        MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::ProtocolMismatch);
+        // ThrowProtocolHeaderFailure 同理：creator 视角 → opener（Py）出错；
+        // opener 视角 → creator（Cpp）写了不一致的 metadata
+        MarkPeerError(m_isCreator ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp,
+                      Ns3AiMsgErrorReason::ProtocolMismatch);
         std::ostringstream oss;
         oss << "ns3-ai message interface schema validation failed:\n"
             << "direction=" << direction << "\n"
