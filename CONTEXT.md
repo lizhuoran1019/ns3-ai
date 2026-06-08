@@ -91,3 +91,17 @@ _Avoid_: 魔法整数、自由格式原因字符串
 **Python 消息接口包装层（Python Message Interface Wrapper）**：
 ns3-ai 提供的 Python 端包装层，为一个共享内存消息接口提供规范的 Python API，同时将载荷访问和邮箱操作委托给生成的 pybind 消息接口对象。
 _Avoid_: 原始 pybind 接口、以生成绑定作为规范 Python API
+
+### 模式元数据
+
+**模式哈希（Schema Hash）**：
+消息结构定义的单向哈希值，用于检测 C++ struct 与 Python binding 是否完全一致。哈希由 `Ns3AiMsgTypeSchemaDefaults<PayloadType>` 模板提供，在共享内存头部交换并由对端校验。
+_Avoid_: 协议版本、兼容性 token
+
+**模式版本（Schema Version）**：
+消息结构定义的单调递增整数版本号，用于辅助人工判断结构新旧。与模式哈希共同组成模式元数据。
+_Avoid_: 协议版本号
+
+**模式元数据（Schema Metadata）**：
+模式哈希与模式版本的统称，在共享内存会话握手期间由 `Ns3AiMsgProtocolHeader` 承载，由 `ValidateProtocolHeader()` 根据 `Ns3AiSchemaValidationMode`（Strict/Compatibility/Disabled）执行校验。模式元数据校验是结构级等值比对，不是协议版本范围协商。
+_Avoid_: 协议兼容性、版本兼容性检查
