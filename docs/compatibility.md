@@ -77,10 +77,12 @@ Disabled → Compatibility → Strict
 | 阶段 | 状态 | 操作 | 预期行为 |
 |---|---|---|---|
 | 1. 临时 Disabled | binding 无任何 schema metadata | `schema_validation_mode="disabled"` | 校验完全跳过，输出 visible warning。确认 struct 可正常工作 |
-| 2. 过渡 Compatibility | binding 已添加 deprecated 别名 (`schema_hash` / `schema_version`) | `schema_validation_mode="compatibility"` | 一端缺失时输出 deprecation warning，不阻塞运行。验证 hash 值与对端一致 |
+| 2. 过渡 Compatibility | binding 正在补齐 directional metadata；若旧 binding 只能提供 deprecated `schema_hash` / `schema_version`，仅作为临时 fallback，应尽快补全 `cpp2py_*` / `py2cpp_*` 四个 attr | `schema_validation_mode="compatibility"` | 一端缺失时输出 deprecation warning，不阻塞运行。验证 hash 值与对端一致 |
 | 3. 最终 Strict | binding 已添加定向 metadata (`cpp2py_schema_hash` / `py2cpp_schema_hash` / versions) | `schema_validation_mode="strict"`（默认） | 完全校验。缺失或 mismatch 立即失败 |
 
 迁移一旦进入下一阶段不应回退。最终目标是所有 binding 运行在 `Strict` 模式。
+
+**注意**：`schema_hash` / `schema_version` 是单向 deprecated 别名，不适合长期用于 cpp2py/py2cpp 使用不同 struct 的 binding。新 binding 必须直接暴露 `cpp2py_schema_hash` / `py2cpp_schema_hash` / versions 四个 directional attr。
 
 ---
 
@@ -180,7 +182,7 @@ m.attr("schema_version") = ENV_STRUCT_SCHEMA_VERSION;
 4. 返回 0
 ```
 
-在 `Strict` 模式下值 0 会导致校验失败并报错；在 `Compatibility` 模式下值 0 触发 warning；在 `Disabled` 模式下静默通过。
+在 `Strict` 模式下值 0 会导致校验失败并报错；在 `Compatibility` 模式下值 0 触发 deprecation warning；在 `Disabled` 模式下不执行 schema 等值校验，但仍会输出 visible warning，避免静默绕过校验。
 
 ---
 
