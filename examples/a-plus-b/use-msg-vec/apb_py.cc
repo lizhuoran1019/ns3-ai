@@ -34,17 +34,17 @@ PYBIND11_MAKE_OPAQUE(ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsg
 PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 {
     ns3::BindNs3AiErrorTypes(m);
-    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode", py::module_local())
         .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
         .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
         .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
         .export_values();
-    py::class_<EnvStruct>(m, "PyEnvStruct")
+    py::class_<EnvStruct>(m, "PyEnvStruct", py::module_local())
         .def(py::init<>())
         .def_readwrite("a", &EnvStruct::env_a)
         .def_readwrite("b", &EnvStruct::env_b);
 
-    py::class_<ActStruct>(m, "PyActStruct").def(py::init<>()).def_readwrite("c", &ActStruct::act_c);
+    py::class_<ActStruct>(m, "PyActStruct", py::module_local()).def(py::init<>()).def_readwrite("c", &ActStruct::act_c);
 
     py::class_<ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector>(m, "PyEnvVector")
         .def(
@@ -90,7 +90,7 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 
     using MsgInterface = ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>;
 
-    py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl")
+    py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl", py::module_local())
         .def(py::init<bool,
                       bool,
                       bool,
@@ -115,10 +115,10 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
              py::arg("lockable_name") = "My Lockable",
              py::arg("sync_timeout_us") = MsgInterface::DEFAULT_SYNC_TIMEOUT_US,
              py::arg("header_name") = "My Header",
-             py::arg("cpp2py_schema_hash") = 0,
-             py::arg("py2cpp_schema_hash") = 0,
-             py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0,
+             py::arg("cpp2py_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<EnvStruct>::SchemaHash),
+             py::arg("py2cpp_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<ActStruct>::SchemaHash),
+             py::arg("cpp2py_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<EnvStruct>::SchemaVersion,
+             py::arg("py2cpp_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<ActStruct>::SchemaVersion,
              py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
@@ -163,4 +163,11 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
         .def("GetPy2CppVector",
              &MsgInterface::GetPy2CppVector,
              py::return_value_policy::reference);
+
+    m.attr("cpp2py_schema_hash") = py::int_(ENV_STRUCT_SCHEMA_HASH);
+    m.attr("py2cpp_schema_hash") = py::int_(ACT_STRUCT_SCHEMA_HASH);
+    m.attr("cpp2py_schema_version") = ENV_STRUCT_SCHEMA_VERSION;
+    m.attr("py2cpp_schema_version") = ACT_STRUCT_SCHEMA_VERSION;
+    m.attr("schema_hash") = py::int_(ENV_STRUCT_SCHEMA_HASH);
+    m.attr("schema_version") = ENV_STRUCT_SCHEMA_VERSION;
 }

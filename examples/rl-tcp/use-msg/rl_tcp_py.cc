@@ -30,12 +30,12 @@ namespace py = pybind11;
 PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
 {
     ns3::BindNs3AiErrorTypes(m);
-    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode")
+    py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode", py::module_local())
         .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
         .value("Compatibility", ns3::Ns3AiSchemaValidationMode::Compatibility)
         .value("Disabled", ns3::Ns3AiSchemaValidationMode::Disabled)
         .export_values();
-    py::class_<ns3::TcpRlEnv>(m, "PyEnvStruct")
+    py::class_<ns3::TcpRlEnv>(m, "PyEnvStruct", py::module_local())
         .def(py::init<>())
         .def_readwrite("nodeId", &ns3::TcpRlEnv::nodeId)
         .def_readwrite("socketUid", &ns3::TcpRlEnv::socketUid)
@@ -47,7 +47,7 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
         .def_readwrite("segmentsAcked", &ns3::TcpRlEnv::segmentsAcked)
         .def_readwrite("bytesInFlight", &ns3::TcpRlEnv::bytesInFlight);
 
-    py::class_<ns3::TcpRlAct>(m, "PyActStruct")
+    py::class_<ns3::TcpRlAct>(m, "PyActStruct", py::module_local())
         .def(py::init<>())
         .def_readwrite("new_ssThresh", &ns3::TcpRlAct::new_ssThresh)
         .def_readwrite("new_cWnd", &ns3::TcpRlAct::new_cWnd);
@@ -79,10 +79,10 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
              py::arg("lockable_name") = "My Lockable",
              py::arg("sync_timeout_us") = MsgInterface::DEFAULT_SYNC_TIMEOUT_US,
              py::arg("header_name") = "My Header",
-             py::arg("cpp2py_schema_hash") = 0,
-             py::arg("py2cpp_schema_hash") = 0,
-             py::arg("cpp2py_schema_version") = 0,
-             py::arg("py2cpp_schema_version") = 0,
+             py::arg("cpp2py_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlEnv>::SchemaHash),
+             py::arg("py2cpp_schema_hash") = py::int_(ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlAct>::SchemaHash),
+             py::arg("cpp2py_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlEnv>::SchemaVersion,
+             py::arg("py2cpp_schema_version") = ns3::Ns3AiMsgTypeSchemaDefaults<ns3::TcpRlAct>::SchemaVersion,
              py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
         .def("GetSessionState",
              [](const MsgInterface& interface) {
@@ -127,4 +127,11 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
         .def("GetPy2CppStruct",
              &MsgInterface::GetPy2CppStruct,
              py::return_value_policy::reference);
+
+    m.attr("cpp2py_schema_hash") = py::int_(ns3::TCP_RL_ENV_SCHEMA_HASH);
+    m.attr("py2cpp_schema_hash") = py::int_(ns3::TCP_RL_ACT_SCHEMA_HASH);
+    m.attr("cpp2py_schema_version") = ns3::TCP_RL_ENV_SCHEMA_VERSION;
+    m.attr("py2cpp_schema_version") = ns3::TCP_RL_ACT_SCHEMA_VERSION;
+    m.attr("schema_hash") = py::int_(ns3::TCP_RL_ENV_SCHEMA_HASH);
+    m.attr("schema_version") = ns3::TCP_RL_ENV_SCHEMA_VERSION;
 }
