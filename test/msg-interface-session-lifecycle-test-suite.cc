@@ -662,6 +662,188 @@ class SessionTimeoutDiagnosticTextTestCase : public TestCase
     }
 };
 
+/**
+ * \brief TryCppSendBegin 在对端不消费 cpp2py slot 时超时并标记 Timeout。
+ *
+ * 与 SessionTimeoutErrorTestCase 对称，覆盖 send 方向 try API。
+ * 1. creator 发送一组数据填满 cpp2py slot
+ * 2. 不调 opener.PyRecvBegin/PyRecvEnd
+ * 3. 再次 TryCppSendBegin → 超时 → 返回 false，标记 Timeout
+ */
+class SessionTryCppSendBeginTimeoutTestCase : public TestCase
+{
+  public:
+    SessionTryCppSendBeginTimeoutTestCase()
+        : TestCase("TryCppSendBegin times out when cpp2py slot is full")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("send-timeout-try"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+
+        // 填满 cpp2py slot，不让 opener 消费
+        creator.CppSendBegin();
+        creator.CppSendEnd();
+
+        const bool result = creator.TryCppSendBegin();
+        NS_TEST_EXPECT_MSG_EQ(result,
+                              false,
+                              "TryCppSendBegin returns false when cpp2py slot is full");
+
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "Send timeout moves the session to ERROR");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Send timeout is recorded as Timeout");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetLastErrorPeer(),
+                              Ns3AiMsgPeer::Cpp,
+                              "The sending peer is recorded as the timeout reporter");
+    }
+};
+
+/**
+ * \brief 阻塞 CppSendBegin 超时异常包含 operation、wait target、counter、timeout、对端状态。
+ *
+ * 与 SessionTimeoutDiagnosticTextTestCase 对称，覆盖 send 方向 blocking API。
+ */
+class SessionCppSendBeginTimeoutDiagnosticTextTestCase : public TestCase
+{
+  public:
+    SessionCppSendBeginTimeoutDiagnosticTextTestCase()
+        : TestCase("blocking CppSendBegin timeout includes diagnostic fields")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("send-timeout-diag"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+
+        // 填满 cpp2py slot
+        creator.CppSendBegin();
+        creator.CppSendEnd();
+
+        bool caughtTimeout = false;
+        bool hasOperation = false;
+        bool hasWaitTarget = false;
+        bool hasCounter = false;
+        bool hasTimeout = false;
+        bool hasCppState = false;
+        bool hasPyState = false;
+        try
+        {
+            creator.CppSendBegin();
+        }
+        catch (const std::runtime_error& e)
+        {
+            caughtTimeout = true;
+            const std::string msg = e.what();
+
+            hasOperation = msg.find("CppSendBegin") != std::string::npos;
+            hasWaitTarget = msg.find("cpp2py empty slot") != std::string::npos;
+            hasCounter = msg.find("counter=") != std::string::npos;
+            hasTimeout = msg.find("timeout=1000") != std::string::npos;
+            hasCppState = msg.find("C++=") != std::string::npos;
+            hasPyState = msg.find("Python=") != std::string::npos;
+        }
+
+        NS_TEST_EXPECT_MSG_EQ(hasOperation, true, "message contains the operation name");
+        NS_TEST_EXPECT_MSG_EQ(hasWaitTarget, true, "message contains the wait target name");
+        NS_TEST_EXPECT_MSG_EQ(hasCounter, true, "message contains counter value");
+        NS_TEST_EXPECT_MSG_EQ(hasTimeout, true, "message contains timeout value in us");
+        NS_TEST_EXPECT_MSG_EQ(hasCppState, true, "message contains C++ peer state");
+        NS_TEST_EXPECT_MSG_EQ(hasPyState, true, "message contains Python peer state");
+
+        NS_TEST_EXPECT_MSG_EQ(caughtTimeout, true,
+                              "CppSendBegin throws on timeout");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Timeout is recorded as Timeout error");
+    }
+};
+
+/**
+ * \brief PyGetFinished 在 CppSetFinished 后返回 true 并将 Python peer state 置为 Finished。
+ *
+ * 正向路径验证 —— 与 error-test-suite 中 handle_finish=false 抛异常的测试互补。
+ * 同时验证重复调用幂等。
+ */
+class SessionPyGetFinishedForwardTestCase : public TestCase
+{
+  public:
+    SessionPyGetFinishedForwardTestCase()
+        : TestCase("PyGetFinished returns true after CppSetFinished")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("py-get-finished"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
+
+        creator.CppSetFinished();
+
+        NS_TEST_EXPECT_MSG_EQ(opener.PyGetFinished(), true,
+                              "PyGetFinished returns true after CppSetFinished");
+
+        NS_TEST_EXPECT_MSG_EQ(opener.GetPyState(),
+                              Ns3AiMsgPeerState::Finished,
+                              "Python peer state is Finished after PyGetFinished");
+        NS_TEST_EXPECT_MSG_NE(opener.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "Session is not Error after finish polling");
+        NS_TEST_EXPECT_MSG_EQ(opener.GetErrorReason(),
+                              Ns3AiMsgErrorReason::None,
+                              "Finish polling does not record an error");
+
+        // 重复调用幂等
+        NS_TEST_EXPECT_MSG_EQ(opener.PyGetFinished(), true,
+                              "Idempotent: second PyGetFinished returns true");
+        NS_TEST_EXPECT_MSG_EQ(opener.GetPyState(),
+                              Ns3AiMsgPeerState::Finished,
+                              "Idempotent: Python peer state remains Finished");
+    }
+};
+
 class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
 {
   public:
@@ -678,6 +860,9 @@ class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
         AddTestCase(new SessionUserInterruptedCloseIdempotentTestCase, TestCase::QUICK);
         AddTestCase(new SessionTryBeginAbortNotTimeoutTestCase, TestCase::QUICK);
         AddTestCase(new SessionTimeoutDiagnosticTextTestCase, TestCase::QUICK);
+        AddTestCase(new SessionTryCppSendBeginTimeoutTestCase, TestCase::QUICK);
+        AddTestCase(new SessionCppSendBeginTimeoutDiagnosticTextTestCase, TestCase::QUICK);
+        AddTestCase(new SessionPyGetFinishedForwardTestCase, TestCase::QUICK);
     }
 };
 

@@ -101,6 +101,27 @@ enum class Ns3AiMsgPeerState : uint8_t
     Error = 5
 };
 
+inline std::ostream&
+operator<<(std::ostream& os, Ns3AiMsgPeerState state)
+{
+    switch (state)
+    {
+    case Ns3AiMsgPeerState::Initializing:
+        return os << "initializing";
+    case Ns3AiMsgPeerState::Ready:
+        return os << "ready";
+    case Ns3AiMsgPeerState::Sending:
+        return os << "sending";
+    case Ns3AiMsgPeerState::Receiving:
+        return os << "receiving";
+    case Ns3AiMsgPeerState::Finished:
+        return os << "finished";
+    case Ns3AiMsgPeerState::Error:
+        return os << "error";
+    }
+    return os << "unknown";
+}
+
 enum class Ns3AiMsgSessionState : uint8_t
 {
     Init = 0,
