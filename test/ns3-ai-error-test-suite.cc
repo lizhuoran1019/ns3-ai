@@ -14,6 +14,7 @@
 #include "ns3/test.h"
 
 #include <boost/interprocess/shared_memory_object.hpp>
+#include <boost/interprocess/managed_shared_memory.hpp>
 
 #include <exception>
 #include <sstream>
@@ -649,6 +650,78 @@ class FinishHandlingNotConfiguredTestCase : public TestCase
     }
 };
 
+/**
+ * \brief  opener 连接 ABI version 不匹配的共享内存段时抛出 Ns3AiProtocolError。
+ *
+ * 通过手工篡改共享内存中 m_abiVersion 的值来模拟跨版本场景，
+ * 而非使用不同版本 ns3-ai 的构建产物。
+ */
+class AbiVersionMismatchTestCase : public TestCase
+{
+  public:
+    AbiVersionMismatchTestCase()
+        : TestCase("opener throws Ns3AiProtocolError on ABI version mismatch")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("abi-ver"));
+        RemoveSegment(names);
+
+        // 1. creator 正常创建并初始化共享内存段
+        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+            true, false, false,
+            4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            1000000,
+            names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
+
+        // 2. 打开同一个共享内存段，篡改协议头中的 ABI version
+        {
+            namespace bip = boost::interprocess;
+            bip::managed_shared_memory segment(bip::open_only, names.m_segmentName.c_str());
+            auto* hdr =
+                segment.find<Ns3AiMsgProtocolHeader>(names.m_headerName.c_str()).first;
+            NS_TEST_ASSERT_MSG_NE(hdr, nullptr,
+                                  "header must exist after creator construct");
+            // m_magic 已被 creator release-store 为正确值，不能改 magic
+            //（会被 Phase 1 先捕获）。只改 m_abiVersion，测试 ABI-specific error path。
+            hdr->m_abiVersion.store(999, std::memory_order_release);
+        }
+
+        // 3. opener 应抛出 Ns3AiProtocolError，且消息中包含具体版本号
+        bool caught = false;
+        try
+        {
+            Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+                false, false, false,
+                4096,
+                names.m_segmentName.c_str(),
+                names.m_cpp2pyMsgName.c_str(),
+                names.m_py2cppMsgName.c_str(),
+                names.m_lockableName.c_str(),
+                1000000,
+                names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
+        }
+        catch (const Ns3AiProtocolError& e)
+        {
+            caught = true;
+            const std::string msg = e.what();
+            NS_TEST_EXPECT_MSG_NE(msg.find("ABI version"), std::string::npos,
+                                  "error message mentions 'ABI version'");
+            NS_TEST_EXPECT_MSG_NE(msg.find("999"), std::string::npos,
+                                  "error message contains the actual mismatched version");
+        }
+        NS_TEST_EXPECT_MSG_EQ(caught, true,
+                              "ABI version mismatch throws Ns3AiProtocolError");
+    }
+};
+
 class Ns3AiErrorTestSuite : public TestSuite
 {
   public:
@@ -666,6 +739,7 @@ class Ns3AiErrorTestSuite : public TestSuite
         AddTestCase(new Ns3AiErrorCatchBySpecificTypeTestCase, TestCase::QUICK);
         AddTestCase(new VectorEnvZeroEnvsTestCase, TestCase::QUICK);
         AddTestCase(new FinishHandlingNotConfiguredTestCase, TestCase::QUICK);
+        AddTestCase(new AbiVersionMismatchTestCase, TestCase::QUICK);
     }
 };
 
