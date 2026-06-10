@@ -791,7 +791,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return false;
         }
-        return HandleSyncResult(WaitForSync(&m_sync->m_cpp2pyEmptyCount, true),
+        return HandleSyncResult(WaitForSync(&m_sync->m_cpp2pyEmptyCount, true,
+                                             Ns3AiMsgPeer::Cpp),
                                 Ns3AiMsgPeer::Cpp);
     };
 
@@ -828,7 +829,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return false;
         }
-        return HandleSyncResult(WaitForSync(&m_sync->m_py2cppFullCount, true),
+        return HandleSyncResult(WaitForSync(&m_sync->m_py2cppFullCount, true,
+                                             Ns3AiMsgPeer::Cpp),
                                 Ns3AiMsgPeer::Cpp);
     };
 
@@ -915,7 +917,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         {
             return false;
         }
-        const auto result = WaitForSync(&m_sync->m_py2cppEmptyCount, true);
+        const auto result = WaitForSync(&m_sync->m_py2cppEmptyCount, true,
+                                         Ns3AiMsgPeer::Py);
         if (result == Ns3AiSemaphore::WaitResult::Acquired)
         {
             return true;
@@ -1182,17 +1185,19 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
         throw Ns3AiProtocolError(oss.str());
     };
 
-    Ns3AiSemaphore::WaitResult WaitForSync(std::atomic<uint8_t>* counter, bool abortOnFinished)
+    Ns3AiSemaphore::WaitResult WaitForSync(std::atomic<uint8_t>* counter,
+                                            bool abortOnFinished,
+                                            Ns3AiMsgPeer waitingPeer)
     {
         const auto hbStart = std::chrono::steady_clock::now();
         uint32_t attempts = 0;
 
         while (true)
         {
-            // 1. Publish self (C++) heartbeat counter
+            // 1. Publish self (waitingPeer) heartbeat counter
             if (m_heartbeatPeriodUs > 0)
             {
-                m_sync->m_cppHeartbeatCounter.fetch_add(1, std::memory_order_release);
+                PublishSelfHeartbeat(waitingPeer);
             }
 
             // 2. Try acquire semaphore
@@ -1201,8 +1206,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                 return Ns3AiSemaphore::WaitResult::Acquired;
             }
 
-            // 3. Check peer heartbeat — may call MarkPeerError(Py, PeerDeath)
-            if (!CheckPeerHeartbeat())
+            // 3. Check peer heartbeat — may call MarkPeerError(peer, PeerDeath)
+            if (!CheckPeerHeartbeat(waitingPeer))
             {
                 return Ns3AiSemaphore::WaitResult::Aborted;
             }
@@ -1236,41 +1241,68 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
     /**
-     * 检查对端（Python）心跳计数器是否停滞。
+     * 发布等待方（waitingPeer）自身的心跳计数器。
+     * C++ wait → 发布 m_cppHeartbeatCounter；Python wait → 发布 m_pyHeartbeatCounter。
+     */
+    void PublishSelfHeartbeat(Ns3AiMsgPeer waitingPeer) const
+    {
+        if (waitingPeer == Ns3AiMsgPeer::Cpp)
+        {
+            m_sync->m_cppHeartbeatCounter.fetch_add(1, std::memory_order_release);
+        }
+        else
+        {
+            m_sync->m_pyHeartbeatCounter.fetch_add(1, std::memory_order_release);
+        }
+    };
+
+    /**
+     * 检查对端心跳计数器是否停滞。
+     * 等待方 = waitingPeer → 对端 = 另一侧。
      * \return true 表示对端活跃或心跳已禁用；false 表示检测到对端死亡并已标记错误。
      */
-    bool CheckPeerHeartbeat()
+    bool CheckPeerHeartbeat(Ns3AiMsgPeer waitingPeer)
     {
         if (m_heartbeatTimeoutUs == 0)
         {
             return true;
         }
 
-        const uint64_t peerCnt = m_sync->m_pyHeartbeatCounter.load(std::memory_order_acquire);
+        // 选择对端计数器、对端身份、以及本端追踪状态
+        const bool isCppWaiting = (waitingPeer == Ns3AiMsgPeer::Cpp);
+        const std::atomic<uint64_t>& peerCounter =
+            isCppWaiting ? m_sync->m_pyHeartbeatCounter : m_sync->m_cppHeartbeatCounter;
+        const Ns3AiMsgPeer peerToBlame = isCppWaiting ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp;
+        uint64_t& lastCnt = isCppWaiting ? m_cppObservedPyCount : m_pyObservedCppCount;
+        std::chrono::steady_clock::time_point& lastTime =
+            isCppWaiting ? m_cppObservedPyTime : m_pyObservedCppTime;
+        bool& initialized = isCppWaiting ? m_cppObservingPy : m_pyObservingCpp;
+
+        const uint64_t peerCnt = peerCounter.load(std::memory_order_acquire);
         const auto now = std::chrono::steady_clock::now();
 
-        if (!m_heartbeatInitialized)
+        if (!initialized)
         {
-            m_lastObservedPeerCount = peerCnt;
-            m_lastObservedPeerTime = now;
-            m_heartbeatInitialized = true;
+            lastCnt = peerCnt;
+            lastTime = now;
+            initialized = true;
             return true;
         }
 
-        if (peerCnt == m_lastObservedPeerCount)
+        if (peerCnt == lastCnt)
         {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                now - m_lastObservedPeerTime);
+                now - lastTime);
             if (static_cast<uint64_t>(elapsed.count()) >= m_heartbeatTimeoutUs)
             {
-                MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::PeerDeath);
+                MarkPeerError(peerToBlame, Ns3AiMsgErrorReason::PeerDeath);
                 return false;
             }
         }
         else
         {
-            m_lastObservedPeerCount = peerCnt;
-            m_lastObservedPeerTime = now;
+            lastCnt = peerCnt;
+            lastTime = now;
         }
         return true;
     };
@@ -1291,7 +1323,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      */
     bool WaitForCpp2PyDataOrFinish()
     {
-        const auto result = WaitForSync(&m_sync->m_cpp2pyFullCount, m_handleFinish);
+        const auto result = WaitForSync(&m_sync->m_cpp2pyFullCount, m_handleFinish,
+                                          Ns3AiMsgPeer::Py);
 
         if (result == Ns3AiSemaphore::WaitResult::Acquired)
         {
@@ -1724,7 +1757,7 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                      bool abortOnFinished,
                      Ns3AiMsgPeer peer)
     {
-        const auto result = WaitForSync(counter, abortOnFinished);
+        const auto result = WaitForSync(counter, abortOnFinished, peer);
         if (result == Ns3AiSemaphore::WaitResult::Acquired)
         {
             return;
@@ -1799,7 +1832,8 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
      * - heartbeat_period_us == 0 表示禁用心跳，此时 heartbeat_timeout_us 也必须为 0
      * - heartbeat_period_us > 0 时：
      *   - period ∈ [100000, 60000000]
-     *   - timeout ∈ [max(3×period, 300000), syncTimeoutUs-1]
+     *   - timeout ≥ max(3×period, 300000)（此下限始终校验）
+     *   - timeout ≥ syncTimeoutUs 时仅 warning（sync timeout 会先触发，心跳检测不生效）
      */
     void ValidateHeartbeatConfig() const
     {
@@ -1823,26 +1857,24 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                 << " is out of range [100000, 60000000].";
             throw Ns3AiRuntimeError(oss.str());
         }
-        if (m_syncTimeoutUs > 0)
+        // 始终校验 lower bound，不依赖 syncTimeoutUs
+        const uint64_t minTimeout = std::max(3ULL * m_heartbeatPeriodUs, 300000ULL);
+        if (m_heartbeatTimeoutUs < minTimeout)
         {
-            const uint64_t minTimeout = std::max(3ULL * m_heartbeatPeriodUs, 300000ULL);
-            if (m_heartbeatTimeoutUs < minTimeout)
-            {
-                std::ostringstream oss;
-                oss << "ns3-ai message interface heartbeat configuration error: "
-                    << "heartbeat_timeout_us=" << m_heartbeatTimeoutUs
-                    << " must be at least " << minTimeout
-                    << " (required: max(3×period, 300000)).";
-                throw Ns3AiRuntimeError(oss.str());
-            }
-            if (m_heartbeatTimeoutUs >= m_syncTimeoutUs)
-            {
-                std::cerr << "ns3-ai [" << m_headerName
-                          << "] heartbeat_timeout_us=" << m_heartbeatTimeoutUs
-                          << " >= sync_timeout_us=" << m_syncTimeoutUs
-                          << "; heartbeat detection is disabled during this session "
-                          << "(sync timeout fires before heartbeat timeout)." << std::endl;
-            }
+            std::ostringstream oss;
+            oss << "ns3-ai message interface heartbeat configuration error: "
+                << "heartbeat_timeout_us=" << m_heartbeatTimeoutUs
+                << " must be at least " << minTimeout
+                << " (required: max(3×period, 300000)).";
+            throw Ns3AiRuntimeError(oss.str());
+        }
+        if (m_syncTimeoutUs > 0 && m_heartbeatTimeoutUs >= m_syncTimeoutUs)
+        {
+            std::cerr << "ns3-ai [" << m_headerName
+                      << "] heartbeat_timeout_us=" << m_heartbeatTimeoutUs
+                      << " >= sync_timeout_us=" << m_syncTimeoutUs
+                      << "; heartbeat detection is disabled during this session "
+                      << "(sync timeout fires before heartbeat timeout)." << std::endl;
         }
     };
 
@@ -1864,9 +1896,14 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     const uint64_t m_syncTimeoutUs;
     const uint64_t m_heartbeatPeriodUs;
     const uint64_t m_heartbeatTimeoutUs;
-    uint64_t m_lastObservedPeerCount{0};
-    std::chrono::steady_clock::time_point m_lastObservedPeerTime;
-    bool m_heartbeatInitialized{false};
+    // C++ 作为等待方时追踪 Python 心跳
+    uint64_t m_cppObservedPyCount{0};
+    std::chrono::steady_clock::time_point m_cppObservedPyTime;
+    bool m_cppObservingPy{false};
+    // Python 作为等待方时追踪 C++ 心跳
+    uint64_t m_pyObservedCppCount{0};
+    std::chrono::steady_clock::time_point m_pyObservedCppTime;
+    bool m_pyObservingCpp{false};
     const uint64_t m_cpp2pySchemaHash;
     const uint64_t m_py2cppSchemaHash;
     const uint32_t m_cpp2pySchemaVersion;
