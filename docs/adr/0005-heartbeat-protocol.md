@@ -1,10 +1,8 @@
 # 采用双向心跳实现共享内存对端死亡检测
 
-共享内存会话（[CONTEXT](../CONTEXT.md)）目前仅在 `WaitForSync` 信号量等待过程中通过 `DEFAULT_SEM_WAIT_TIMEOUT_US`（300 秒）超时检测对端异常退出。这一机制有两个缺陷：
-1. 完全空闲的会话（无数据交换）无法检测对端死亡
-2. 即使有数据交换，检测延迟可能高达 300 秒
+共享内存会话（[CONTEXT](../CONTEXT.md)）当前仅在 `WaitForSync` 信号量等待过程中通过 `DEFAULT_SEM_WAIT_TIMEOUT_US`（300 秒）超时检测对端异常退出。主要缺陷是检测延迟可能高达 300 秒。
 
-本 ADR 设计心跳协议，使任一对端可在对方无声退出后合理时间内检测并产生 `Ns3AiMsgErrorReason::PeerDeath` 结构化错误。
+本 ADR 设计心跳协议，将 peer-death 检测限定在 `WaitForSync` 等待窗口内，并把检测延迟降低到 `heartbeat_timeout_us`（默认 3 秒）。完全无 API 调用的 idle 会话不在本 ADR 的检测范围内。
 
 ---
 
@@ -189,10 +187,10 @@ WaitForSync 返回后:
 | 1 | C++ 进程崩溃（kill -9） |
 | 2 | `m_cppHeartbeatCounter` 停止推进 |
 | 3 | Python daemon **不检测** → 无错误 |
-| 4 | Python 下次 `PySendBegin`/`PyRecvBegin` → pybind 调用 C++ `WaitForSync` |
-| 5 | C++ `WaitForSync` 自旋中检查 `m_cppCounter` → 停滞 |
+| 4 | Python 下次 `PySendBegin`/`PyRecvBegin` → 调用同进程内 pybind 暴露的底层 `WaitForSync` 实现 |
+| 5 | `WaitForSync` 自旋中检查 `m_cppHeartbeatCounter` → 停滞 |
 | 6 | 超过 `heartbeat_timeout_us` → `MarkPeerError(Cpp, PeerDeath)` |
-| 7 | `m_sessionState = Error` → `WaitForSync` abort → pybind 异常传播 |
+| 7 | `m_sessionState = Error` → wait abort → pybind 异常传播 |
 
 ### Python 崩溃后 C++ 检测
 

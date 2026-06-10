@@ -159,8 +159,8 @@ _Avoid_: 仅依赖版本号、仅依赖大小检查
 ### 心跳
 
 **双向心跳（Bidirectional Heartbeat）**：
-共享内存会话中每端独立发布自己的存活信号、独立检测对端存活信号是否停滞的心跳协议。不是 request/response ping，不需要 ACK。
-_Avoid_: 主从心跳、ping-pong 式成对心跳
+共享内存会话中每端独立发布自己的存活信号；当本端正在等待对端推进时，检测对端存活信号是否停滞。不是 request/response ping，不需要 ACK。
+_Avoid_: 主从心跳、ping-pong 式成对心跳、空闲时主动判死
 
 **心跳间隔（Heartbeat Interval）**：
 两端周期性更新自己心跳字段的时间间隔。C++ 端和 Python 端可配置为不同值，不要求对称。
