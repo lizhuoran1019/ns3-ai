@@ -85,6 +85,9 @@ class FakeMessageInterface:
         self.calls.append(("CheckGenerationId", generation_id, peer))
         return generation_id == 202
 
+    def HeartbeatPublish(self):
+        self.calls.append("HeartbeatPublish")
+
 
 class FailingMessageInterface(FakeMessageInterface):
     def __init__(self, session_state):
@@ -536,6 +539,8 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
             1,
             2,
             SchemaValidationMode.Strict,
+            1000000,  # heartbeat_period_us
+            3000000,  # heartbeat_timeout_us
         ))
 
         opener_raw = FakeMessageInterface()
@@ -544,6 +549,126 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
 
         self.assertIs(opener.raw_interface, opener_raw)
         self.assertEqual(opener_module.constructor_args[0], False)
+
+    def test_heartbeat_publisher_rejects_invalid_period(self):
+        """period_us < 100000 或 > 60000000 时抛出 ValueError。"""
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
+        with self.assertRaises(ValueError):
+            interface.start_heartbeat_publisher(period_us=0)
+        with self.assertRaises(ValueError):
+            interface.start_heartbeat_publisher(period_us=99999)
+        with self.assertRaises(ValueError):
+            interface.start_heartbeat_publisher(period_us=60000001)
+
+    def test_heartbeat_publisher_thread_lifecycle(self):
+        """start → thread alive, stop → thread cleaned."""
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
+        interface.start_heartbeat_publisher(period_us=100000)
+        self.assertTrue(interface._hb_thread.is_alive(),
+                        "Publisher thread should be alive after start")
+
+        interface.stop_heartbeat_publisher()
+        self.assertIsNone(interface._hb_thread,
+                          "Publisher thread reference should be None after stop")
+
+    def test_start_heartbeat_publisher_is_idempotent(self):
+        """重复 start_heartbeat_publisher 不会创建多余线程。"""
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
+        interface.start_heartbeat_publisher(period_us=100000)
+        thread_id = id(interface._hb_thread)
+        interface.start_heartbeat_publisher(period_us=100000)
+
+        self.assertEqual(id(interface._hb_thread), thread_id,
+                         "Second start should reuse existing thread")
+        interface.stop_heartbeat_publisher()
+
+    def test_stop_heartbeat_publisher_is_idempotent(self):
+        """重复 stop_heartbeat_publisher 不抛异常。"""
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
+        interface.start_heartbeat_publisher(period_us=100000)
+        interface.stop_heartbeat_publisher()
+        interface.stop_heartbeat_publisher()  # 第二次不应抛异常
+
+    def test_close_stops_publisher_and_clears_raw_interface(self):
+        """close() 先停心跳再释放 raw_interface。"""
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
+        interface.start_heartbeat_publisher(period_us=100000)
+        interface.close()
+
+        self.assertIsNone(interface._raw_interface,
+                          "raw_interface should be None after close")
+        interface.close()  # 重复 close 不抛异常
+
+    def test_heartbeat_publisher_called_on_wake(self):
+        """Publisher 线程在周期唤醒后调用 HeartbeatPublish。"""
+        raw_interface = FakeMessageInterface()
+        interface = Ns3AiMsgInterface(raw_interface)
+
+        interface.start_heartbeat_publisher(period_us=100000)
+
+        import time
+        time.sleep(0.12)
+        interface.stop_heartbeat_publisher()
+
+        self.assertIn("HeartbeatPublish", raw_interface.calls,
+                       "HeartbeatPublish should be called at least once")
+        self.assertGreaterEqual(raw_interface.calls.count("HeartbeatPublish"), 1)
+
+    def test_experiment_run_starts_heartbeat_publisher(self):
+        """Experiment.run() 在 session ready 后自动启动 publisher。"""
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+        experiment = Experiment("target", ".", msg_module, heartbeatPeriodUs=100000)
+
+        with mock.patch("ns3ai_utils.kill_proc_tree"):
+            with mock.patch("ns3ai_utils.run_single_ns3",
+                            return_value=("ns3 command", FakeProcess())):
+                interface = experiment.run()
+
+            self.assertTrue(hasattr(interface, '_hb_thread'),
+                            "Publisher thread should be started after run()")
+            self.assertTrue(interface._hb_thread.is_alive(),
+                            "Publisher thread should be alive after run()")
+            interface.stop_heartbeat_publisher()
+
+    def test_experiment_kill_stops_heartbeat_publisher(self):
+        """Experiment.kill() 停止 publisher 线程。"""
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+        experiment = Experiment("target", ".", msg_module, heartbeatPeriodUs=100000)
+
+        with mock.patch("ns3ai_utils.kill_proc_tree"):
+            with mock.patch("ns3ai_utils.run_single_ns3",
+                            return_value=("ns3 command", FakeProcess())):
+                experiment.run()
+
+            experiment.kill()
+            self.assertIsNone(experiment.msgInterface._hb_thread,
+                              "Publisher thread reference should be None after kill")
+
+    def test_experiment_zero_heartbeat_period_does_not_start_publisher(self):
+        """heartbeatPeriodUs=0 时 Experiment.run() 不启动 publisher。"""
+        raw_interface = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw_interface)
+        experiment = Experiment("target", ".", msg_module, heartbeatPeriodUs=0)
+
+        with mock.patch("ns3ai_utils.kill_proc_tree"):
+            with mock.patch("ns3ai_utils.run_single_ns3",
+                            return_value=("ns3 command", FakeProcess())):
+                interface = experiment.run()
+
+            self.assertIsNone(interface._hb_thread,
+                              "Publisher thread should be None when heartbeatPeriodUs=0")
 
 
 if __name__ == "__main__":
