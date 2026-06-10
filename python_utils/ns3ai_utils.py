@@ -266,34 +266,40 @@ class Ns3AiMsgInterface:
             raise ValueError(
                 'ns3ai_utils: heartbeat_period_us={} is out of range [100000, 60000000]'.format(
                     period_us))
-        if getattr(self, '_hb_thread', None) is not None and self._hb_thread.is_alive():
-            return  # 已启动，幂等返回
+        if not hasattr(self, '_hb_lock'):
+            self._hb_lock = threading.Lock()
+        with self._hb_lock:
+            if getattr(self, '_hb_thread', None) is not None and self._hb_thread.is_alive():
+                return  # 已启动，幂等返回
 
-        self._hb_stop = threading.Event()
+            self._hb_stop = threading.Event()
 
-        def _publish():
-            raw = self._raw_interface
-            stop = self._hb_stop
-            while not stop.is_set():
-                if raw is None:
-                    break
-                try:
-                    raw.HeartbeatPublish()
-                except Exception:
-                    break
-                time.sleep(period_us / 1_000_000)
+            def _publish():
+                raw = self._raw_interface
+                stop = self._hb_stop
+                while not stop.is_set():
+                    if raw is None:
+                        break
+                    try:
+                        raw.HeartbeatPublish()
+                    except Exception:
+                        break
+                    time.sleep(period_us / 1_000_000)
 
-        self._hb_thread = threading.Thread(target=_publish, daemon=True)
-        self._hb_thread.start()
+            self._hb_thread = threading.Thread(target=_publish, daemon=True)
+            self._hb_thread.start()
 
     def stop_heartbeat_publisher(self):
         """停止后台 daemon 线程。幂等安全。"""
-        hb_stop = getattr(self, '_hb_stop', None)
-        if hb_stop is not None:
-            hb_stop.set()
-        hb_thread = getattr(self, '_hb_thread', None)
-        if hb_thread is not None and hb_thread.is_alive():
-            hb_thread.join(timeout=2)
+        if not hasattr(self, '_hb_lock'):
+            self._hb_lock = threading.Lock()
+        with self._hb_lock:
+            hb_stop = getattr(self, '_hb_stop', None)
+            if hb_stop is not None:
+                hb_stop.set()
+            hb_thread = getattr(self, '_hb_thread', None)
+            if hb_thread is not None and hb_thread.is_alive():
+                hb_thread.join(timeout=2)
 
     def close(self):
         """关闭会话：先停心跳，再释放 raw_interface。"""
@@ -590,6 +596,8 @@ class ParallelExperiment:
                  useVector=False, vectorSize=None,
                  shmSize=4096,
                  syncTimeoutUs=None,
+                 heartbeatPeriodUs=1000000,
+                 heartbeatTimeoutUs=3000000,
                  cpp2pySchemaHash=None,
                  py2cppSchemaHash=None,
                  cpp2pySchemaVersion=None,
@@ -609,6 +617,8 @@ class ParallelExperiment:
                            vectorSize=vectorSize,
                            shmSize=shmSize,
                            syncTimeoutUs=syncTimeoutUs,
+                           heartbeatPeriodUs=heartbeatPeriodUs,
+                           heartbeatTimeoutUs=heartbeatTimeoutUs,
                            cpp2pySchemaHash=cpp2pySchemaHash,
                            py2cppSchemaHash=py2cppSchemaHash,
                            cpp2pySchemaVersion=cpp2pySchemaVersion,

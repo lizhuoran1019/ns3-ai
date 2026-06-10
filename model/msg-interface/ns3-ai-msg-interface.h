@@ -1206,8 +1206,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                 return Ns3AiSemaphore::WaitResult::Acquired;
             }
 
-            // 3. Check peer heartbeat — may call MarkPeerError(peer, PeerDeath)
-            if (!CheckPeerHeartbeat(waitingPeer))
+            // 3. Check peer heartbeat — 仅 C++ 作为等待方时检测 Python 心跳。
+            //    Python 等待时不检测 C++ 心跳（C++ 不在 WaitForSync 中时也递增，
+            //    无法区分 "正在计算" 和 "进程死亡"）。
+            if (waitingPeer == Ns3AiMsgPeer::Cpp && !CheckPeerHeartbeat(waitingPeer))
             {
                 return Ns3AiSemaphore::WaitResult::Aborted;
             }

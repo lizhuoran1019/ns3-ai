@@ -1011,6 +1011,59 @@ class SessionHeartbeatDisableByZeroTestCase : public TestCase
     }
 };
 
+/**
+ * \brief Python 等待时不误判活着的 C++ 为 PeerDeath。
+ *
+ * C++ 通过辅助线程发布心跳（模拟存活但不进入 WaitForSync），
+ * Python 调用 TryPyRecvBegin 进入 WaitForSync → 仅发布 py counter，
+ * 不检查 cpp counter → 不会触发 PeerDeath → 最终 sync timeout。
+ */
+class SessionHeartbeatPythonWaitNoFalsePeerDeathTestCase : public TestCase
+{
+  public:
+    SessionHeartbeatPythonWaitNoFalsePeerDeathTestCase()
+        : TestCase("Python wait does not false-detect PeerDeath when C++ is alive")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("hb-py-no-false"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            600000,           // sync_timeout_us = 600ms
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            100000,           // heartbeat_period_us = 100ms
+            300000);          // heartbeat_timeout_us = 300ms
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            600000,
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            100000,
+            300000);
+
+        // Python 路径 → TryPyRecvBegin → WaitForSync(waitingPeer=Py)
+        // 按设计：Python 等待时不检查对端心跳 → C++ counter 停滞不触发 PeerDeath
+        const bool result = opener.TryPyRecvBegin();
+
+        NS_TEST_EXPECT_MSG_EQ(result, false,
+                              "TryPyRecvBegin returns false on sync timeout (not PeerDeath)");
+        NS_TEST_EXPECT_MSG_EQ(opener.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "Sync timeout moves session to Error");
+        NS_TEST_EXPECT_MSG_EQ(opener.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Error reason is Timeout (not PeerDeath) for Python wait path");
+    }
+};
+
 class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
 {
   public:
@@ -1033,6 +1086,7 @@ class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
         AddTestCase(new SessionHeartbeatNormalLivenessTestCase, TestCase::QUICK);
         AddTestCase(new SessionHeartbeatPeerDeathDetectionTestCase, TestCase::QUICK);
         AddTestCase(new SessionHeartbeatDisableByZeroTestCase, TestCase::QUICK);
+        AddTestCase(new SessionHeartbeatPythonWaitNoFalsePeerDeathTestCase, TestCase::QUICK);
     }
 };
 
