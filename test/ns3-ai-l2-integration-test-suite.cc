@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <sstream>
 #include <string>
@@ -55,54 +56,157 @@ RemoveSegment(const Ns3AiMsgInterfaceNames& names)
     boost::interprocess::shared_memory_object::remove(names.m_segmentName.c_str());
 }
 
+// ---------- Fork 与子进程退出码检查 ----------
+
 /**
- * \brief 轮询 session state，直到达到或超过期望状态，或超时。
+ * \brief fork 并执行子进程逻辑，子进程结束时应 _exit(code)。
+ * \return 子进程 pid（仅在父进程中返回）。
  *
- * 使用 >= 比较（Init < Ready < Running < Closing < Closed < Error），
- * 避免细粒度轮询错过中间状态跃迁。
- *
- * \return 超时前达到期望状态返回 true，否则 false。
+ * 注意：不要在 ForkChild 内使用 NS_TEST_* 宏（它们包含 return/continue，
+ * 不能在独立函数中正确工作）。
+ */
+pid_t
+ForkChild()
+{
+    pid_t pid = fork();
+    if (pid == -1)
+    {
+        std::cerr << "L2 test: fork() failed" << std::endl;
+        std::abort();
+    }
+    return pid;
+}
+
+/**
+ * \brief 等待子进程退出并检查退出码。
+ * \return 子进程正常退出且退出码匹配 expectedCode 时返回 true。
  */
 bool
-WaitForSessionState(Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg>& iface,
-                    Ns3AiMsgSessionState minExpected,
-                    uint64_t timeoutUs)
+WaitChild(pid_t pid, int expectedCode = 0)
 {
-    const auto start = std::chrono::steady_clock::now();
-    while (static_cast<uint8_t>(iface.GetSessionState()) < static_cast<uint8_t>(minExpected))
+    int status;
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status))
     {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - start);
-        if (timeoutUs > 0 && static_cast<uint64_t>(elapsed.count()) >= timeoutUs)
-        {
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::cerr << "L2 test: child pid=" << pid << " terminated by signal "
+                  << WTERMSIG(status) << " (expected code " << expectedCode << ")"
+                  << std::endl;
+        return false;
+    }
+    if (WEXITSTATUS(status) != expectedCode)
+    {
+        std::cerr << "L2 test: child pid=" << pid << " exited with code "
+                  << WEXITSTATUS(status) << " (expected " << expectedCode << ")"
+                  << std::endl;
+        return false;
     }
     return true;
 }
 
+// ---------- 会话状态等待 ----------
+
 /**
- * \brief L2 IPC timeout real path。
+ * \brief 等待会话脱离 Init（即至少达到 Ready / Running），或检测到 Error 后立即返回失败。
  *
- * Creator 创建共享内存，opener 打开后立即退出（不交换数据），
- * Creator TryCppRecvBegin 超时 -> Timeout。
+ * 子进程可能在父进程第一次轮询前就从 Init→Ready→Running 跃迁，
+ * 因此不能只等待精确的 Ready。此函数等待 Init 被离开，同时将 Error 视为失败。
+ *
+ * \return 会话离开 Init 返回 true；进入 Error 或超时返回 false。
  */
-class L2IpcTimeoutRealPathTestCase : public TestCase
+bool
+WaitForSessionActive(Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg>& iface,
+                     uint64_t timeoutUs)
+{
+    const auto start = std::chrono::steady_clock::now();
+    while (true)
+    {
+        const auto state = iface.GetSessionState();
+        if (state != Ns3AiMsgSessionState::Init)
+        {
+            // Ready / Running / Closing / Closed 均视为活跃
+            return true;
+        }
+        if (state == Ns3AiMsgSessionState::Error)
+        {
+            return false;
+        }
+        if (timeoutUs > 0)
+        {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - start);
+            if (static_cast<uint64_t>(elapsed.count()) >= timeoutUs)
+            {
+                return false;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+/**
+ * \brief 等待精确目标状态，或检测到 Error 后立即返回失败。
+ *
+ * 用于等待稳定的终态（Closing、Closed）。不适用于等待 Ready，
+ * 因为子进程可能快速越过 Ready。
+ *
+ * \return target 状态达到返回 true；进入 Error 或超时返回 false。
+ */
+bool
+WaitForExactStateOrError(Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg>& iface,
+                         Ns3AiMsgSessionState target,
+                         uint64_t timeoutUs)
+{
+    const auto start = std::chrono::steady_clock::now();
+    while (true)
+    {
+        const auto state = iface.GetSessionState();
+        if (state == target)
+        {
+            return true;
+        }
+        // Error 永远是异常终态，不应视为成功
+        if (state == Ns3AiMsgSessionState::Error)
+        {
+            return false;
+        }
+        if (timeoutUs > 0)
+        {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - start);
+            if (static_cast<uint64_t>(elapsed.count()) >= timeoutUs)
+            {
+                return false;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+// ================================================================
+// 测试用例
+// ================================================================
+
+/**
+ * \brief 无 opener 加入时 TryCppSendBegin 立即返回 false。
+ *
+ * 对应 #62"no opener joins"语义。当前实现中 session 处于 Init
+ * 无法进入数据交换，TryCppSendBegin 在 TryBeginDataExchange 阶段
+ * 直接返回 false（不进入 WaitForSync）。
+ */
+class NoOpenerJoinRejectedTestCase : public TestCase
 {
   public:
-    L2IpcTimeoutRealPathTestCase()
-        : TestCase("L2 IPC timeout: subprocess opener exits without data exchange")
+    NoOpenerJoinRejectedTestCase()
+        : TestCase("no opener joins: TryCppSendBegin returns false (session Init)")
     {
     }
 
   private:
     void DoRun() override
     {
-        constexpr uint64_t SYNC_TIMEOUT_US = 100000;  // 100 ms
-        constexpr uint64_t POLL_TIMEOUT_US = 5000000; // 5 s
+        constexpr uint64_t SYNC_TIMEOUT_US = 100000;
 
-        const auto names = MakeTestNames(MakeUniqueSuffix("l2-timeout"));
+        const auto names = MakeTestNames(MakeUniqueSuffix("l2-no-opener"));
         RemoveSegment(names);
 
         Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
@@ -113,16 +217,60 @@ class L2IpcTimeoutRealPathTestCase : public TestCase
             names.m_lockableName.c_str(),
             SYNC_TIMEOUT_US,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
-            0, // heartbeat_period_us = 0 (禁用)
-            0  // heartbeat_timeout_us = 0 (禁用)
-        );
+            0, 0);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        // 没有 fork，没有 opener
+        const bool result = creator.TryCppSendBegin();
+
+        NS_TEST_EXPECT_MSG_EQ(result,
+                              false,
+                              "TryCppSendBegin returns false when session is Init");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Init,
+                              "Session stays Init (no Error, no timeout)");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::None,
+                              "No error reason recorded for Init rejection");
+    }
+};
+
+/**
+ * \brief Opener 加入后立即退出的 recv timeout。
+ *
+ * Creator 创建共享内存，opener 加入后立即退出（不交换数据），
+ * Creator TryCppRecvBegin 等待 py2cpp 数据超时 -> Timeout。
+ */
+class IpcRecvTimeoutAfterOpenerExitTestCase : public TestCase
+{
+  public:
+    IpcRecvTimeoutAfterOpenerExitTestCase()
+        : TestCase("IPC recv timeout: opener joins then exits, creator recv times out")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint64_t SYNC_TIMEOUT_US = 100000;
+        constexpr uint64_t POLL_TIMEOUT_US = 5000000;
+
+        const auto names = MakeTestNames(MakeUniqueSuffix("l2-recv-timeout"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            SYNC_TIMEOUT_US,
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            0, 0);
+
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
-            // Child: 以 opener 身份打开共享内存段，然后立即退出
             Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
@@ -135,18 +283,16 @@ class L2IpcTimeoutRealPathTestCase : public TestCase
             _exit(0);
         }
 
-        // Parent: 等待 child 打开（session -> Ready）
-        const bool ready =
-            WaitForSessionState(creator, Ns3AiMsgSessionState::Ready, POLL_TIMEOUT_US);
-        NS_TEST_ASSERT_MSG_EQ(ready,
+        // Parent: 等待 session 脱离 Init（child 打开后可能直接到 Running）
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_ASSERT_MSG_EQ(active,
                               true,
-                              "Session must reach Ready after child opens the segment");
+                              "Session must leave Init after child opens the segment");
 
-        // child 已退出，没有数据到来 -> 超时
         const bool result = creator.TryCppRecvBegin();
 
         NS_TEST_EXPECT_MSG_EQ(result, false, "TryCppRecvBegin returns false on timeout");
-
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Error,
                               "Timeout moves session to Error");
@@ -154,21 +300,20 @@ class L2IpcTimeoutRealPathTestCase : public TestCase
                               Ns3AiMsgErrorReason::Timeout,
                               "Error reason is Timeout when no data arrives");
 
-        int status;
-        waitpid(pid, &status, 0);
+        NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
     }
 };
 
 /**
- * \brief L2 Running state reachable。
+ * \brief 完整 struct payload 跨进程往返。
  *
- * 完整 struct payload 往返：CppSend → PyRecv → PySend → CppRecv，
- * 验证跨越进程边界的双工数据交换。
+ * CppSendBegin → CppSendEnd → PyRecvBegin → PyRecvEnd → PySendBegin → PySendEnd → CppRecvBegin → CppRecvEnd
+ * 验证 Running 状态在往返全程保持。
  */
-class L2RunningStateReachableTestCase : public TestCase
+class RunningStateReachableTestCase : public TestCase
 {
   public:
-    L2RunningStateReachableTestCase()
+    RunningStateReachableTestCase()
         : TestCase("L2 Running state: full data exchange across subprocess boundary")
     {
     }
@@ -176,8 +321,8 @@ class L2RunningStateReachableTestCase : public TestCase
   private:
     void DoRun() override
     {
-        constexpr uint64_t SYNC_TIMEOUT_US = 5000000; // 5 s — 足够完成往返
-        constexpr uint64_t POLL_TIMEOUT_US = 5000000; // 5 s
+        constexpr uint64_t SYNC_TIMEOUT_US = 5000000;
+        constexpr uint64_t POLL_TIMEOUT_US = 5000000;
 
         const auto names = MakeTestNames(MakeUniqueSuffix("l2-running"));
         RemoveSegment(names);
@@ -192,8 +337,7 @@ class L2RunningStateReachableTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             0, 0);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
@@ -207,7 +351,6 @@ class L2RunningStateReachableTestCase : public TestCase
                 names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
                 0, 0);
 
-            // 接收 C++ 发送的数据
             const bool recvOk = opener.TryPyRecvBegin();
             if (!recvOk)
             {
@@ -216,7 +359,6 @@ class L2RunningStateReachableTestCase : public TestCase
             const uint32_t received = opener.GetCpp2PyStruct()->value;
             opener.PyRecvEnd();
 
-            // 发送回复
             opener.PySendBegin();
             opener.GetPy2CppStruct()->value = received + 1;
             opener.PySendEnd();
@@ -224,14 +366,12 @@ class L2RunningStateReachableTestCase : public TestCase
             _exit(0);
         }
 
-        // Parent: 等待 child 打开（>= Ready，包括 Running 子状态）
-        const bool ready =
-            WaitForSessionState(creator, Ns3AiMsgSessionState::Ready, POLL_TIMEOUT_US);
-        NS_TEST_ASSERT_MSG_EQ(ready,
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_ASSERT_MSG_EQ(active,
                               true,
-                              "Session must reach Ready before data exchange");
+                              "Session must leave Init after child opens");
 
-        // 发送数据
         constexpr uint32_t SENT_VALUE = 42;
         creator.CppSendBegin();
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
@@ -240,7 +380,6 @@ class L2RunningStateReachableTestCase : public TestCase
         creator.GetCpp2PyStruct()->value = SENT_VALUE;
         creator.CppSendEnd();
 
-        // 接收 child 的回复
         const bool recvOk = creator.TryCppRecvBegin();
         NS_TEST_EXPECT_MSG_EQ(recvOk, true, "CppRecvBegin must succeed after child sends response");
         if (recvOk)
@@ -255,21 +394,19 @@ class L2RunningStateReachableTestCase : public TestCase
                               Ns3AiMsgSessionState::Running,
                               "Session remains Running after full data exchange");
 
-        int status;
-        waitpid(pid, &status, 0);
+        NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit with code 0");
     }
 };
 
 /**
- * \brief L2 关闭握手（从各侧发起）。
+ * \brief 关闭握手：Cpp 请求关闭，Py 确认。
  *
- * Test A: Cpp 请求关闭 → Py 确认。
- * Test B: Py 请求关闭 → Cpp 确认。
+ * 子进程使用带 timeout 的轮询等待 Closing 状态，避免无限等待。
  */
-class L2CloseHandshakeCppToPyTestCase : public TestCase
+class CloseHandshakeCppToPyTestCase : public TestCase
 {
   public:
-    L2CloseHandshakeCppToPyTestCase()
+    CloseHandshakeCppToPyTestCase()
         : TestCase("L2 close handshake: Cpp requests close, Py acknowledges")
     {
     }
@@ -293,8 +430,7 @@ class L2CloseHandshakeCppToPyTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             0, 0);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
@@ -308,12 +444,13 @@ class L2CloseHandshakeCppToPyTestCase : public TestCase
                 names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
                 0, 0);
 
-            // 等待 Cpp 发起关闭
-            while (opener.GetSessionState() != Ns3AiMsgSessionState::Closing)
+            // 等待 Cpp 发起关闭（带 timeout）
+            const bool closing =
+                WaitForExactStateOrError(opener, Ns3AiMsgSessionState::Closing, POLL_TIMEOUT_US);
+            if (!closing)
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                _exit(2);
             }
-
             NS_TEST_EXPECT_MSG_EQ(opener.GetCloseReason(),
                                   Ns3AiMsgCloseReason::Normal,
                                   "Opener sees Normal close reason");
@@ -321,15 +458,15 @@ class L2CloseHandshakeCppToPyTestCase : public TestCase
             _exit(0);
         }
 
-        // Parent: 等待 Ready
-        const bool ready =
-            WaitForSessionState(creator, Ns3AiMsgSessionState::Ready, POLL_TIMEOUT_US);
-        NS_TEST_ASSERT_MSG_EQ(ready, true, "Session must reach Ready");
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_ASSERT_MSG_EQ(active,
+                              true,
+                              "Session must leave Init before close");
 
         creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
 
-        int status;
-        waitpid(pid, &status, 0);
+        NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0), true, "Child must ack close and exit cleanly");
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Closed,
@@ -340,10 +477,15 @@ class L2CloseHandshakeCppToPyTestCase : public TestCase
     }
 };
 
-class L2CloseHandshakePyToCppTestCase : public TestCase
+/**
+ * \brief 关闭握手：Py 请求关闭，Cpp 确认。
+ *
+ * 子进程使用带 timeout 的轮询等待 Closed 状态。
+ */
+class CloseHandshakePyToCppTestCase : public TestCase
 {
   public:
-    L2CloseHandshakePyToCppTestCase()
+    CloseHandshakePyToCppTestCase()
         : TestCase("L2 close handshake: Py requests close, Cpp acknowledges")
     {
     }
@@ -367,8 +509,7 @@ class L2CloseHandshakePyToCppTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             0, 0);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
@@ -384,30 +525,34 @@ class L2CloseHandshakePyToCppTestCase : public TestCase
 
             opener.RequestClose(Ns3AiMsgPeer::Py, Ns3AiMsgCloseReason::UserInterrupted);
 
-            // 等待 Cpp 确认
-            while (opener.GetSessionState() != Ns3AiMsgSessionState::Closed)
+            // 等待 Cpp 确认（带 timeout）
+            const bool closed =
+                WaitForExactStateOrError(opener, Ns3AiMsgSessionState::Closed, POLL_TIMEOUT_US);
+            if (!closed)
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                _exit(2);
             }
             _exit(0);
         }
 
-        // Parent: 等待 Ready，再等待 Closing（child 发起的关闭）
-        const bool ready =
-            WaitForSessionState(creator, Ns3AiMsgSessionState::Ready, POLL_TIMEOUT_US);
-        NS_TEST_ASSERT_MSG_EQ(ready, true, "Session must reach Ready");
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_ASSERT_MSG_EQ(active,
+                              true,
+                              "Session must leave Init before proceeding");
 
         const bool closing =
-            WaitForSessionState(creator, Ns3AiMsgSessionState::Closing, POLL_TIMEOUT_US);
-        NS_TEST_ASSERT_MSG_EQ(closing, true, "Session must reach Closing (from child RequestClose)");
+            WaitForExactStateOrError(creator, Ns3AiMsgSessionState::Closing, POLL_TIMEOUT_US);
+        NS_TEST_ASSERT_MSG_EQ(closing,
+                              true,
+                              "Session must reach Closing (from child RequestClose)");
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetCloseReason(),
                               Ns3AiMsgCloseReason::UserInterrupted,
                               "Creator observes UserInterrupted close reason");
         creator.AcknowledgeClose(Ns3AiMsgPeer::Cpp);
 
-        int status;
-        waitpid(pid, &status, 0);
+        NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly after close");
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Closed,
@@ -416,15 +561,12 @@ class L2CloseHandshakePyToCppTestCase : public TestCase
 };
 
 /**
- * \brief L2 Schema Strict mode end-to-end。
- *
- * 匹配的 metadata → opener 构造成功；
- * 不匹配的 hash → opener 构造失败（ProtocolMismatch）。
+ * \brief Schema Strict 模式：匹配 metadata → opener 成功加入。
  */
-class L2SchemaStrictMatchTestCase : public TestCase
+class SchemaStrictMatchTestCase : public TestCase
 {
   public:
-    L2SchemaStrictMatchTestCase()
+    SchemaStrictMatchTestCase()
         : TestCase("L2 schema strict: matching metadata allows opener to join")
     {
     }
@@ -438,7 +580,6 @@ class L2SchemaStrictMatchTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("l2-schema-match"));
         RemoveSegment(names);
 
-        // Creator: Strict 模式，non-zero metadata
         Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
@@ -447,18 +588,13 @@ class L2SchemaStrictMatchTestCase : public TestCase
             names.m_lockableName.c_str(),
             SYNC_TIMEOUT_US,
             names.m_headerName.c_str(),
-            0xAAAA, // cpp2py_schema_hash
-            0xBBBB, // py2cpp_schema_hash
-            1,      // cpp2py_schema_version
-            1,      // py2cpp_schema_version
+            0xAAAA, 0xBBBB, 1, 1,
             Ns3AiSchemaValidationMode::Strict);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
-            // Opener: 匹配的 metadata → 应成功
             Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
@@ -472,21 +608,26 @@ class L2SchemaStrictMatchTestCase : public TestCase
             _exit(0);
         }
 
-        const bool ready =
-            WaitForSessionState(creator, Ns3AiMsgSessionState::Ready, POLL_TIMEOUT_US);
-        NS_TEST_EXPECT_MSG_EQ(ready,
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_EXPECT_MSG_EQ(active,
                               true,
-                              "Matching metadata allows opener to join (session reaches Ready)");
+                              "Matching metadata allows opener to join");
 
-        int status;
-        waitpid(pid, &status, 0);
+        NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
     }
 };
 
-class L2SchemaStrictMismatchTestCase : public TestCase
+/**
+ * \brief Schema Strict 模式：不匹配的 cpp2py hash → opener 构造抛出 Ns3AiSchemaError。
+ *
+ * 子进程 catch Ns3AiSchemaError 后以退出码 0 表示验证通过。
+ * 父进程验证 creator 侧 session 进入 Error + reason = ProtocolMismatch。
+ */
+class SchemaStrictMismatchTestCase : public TestCase
 {
   public:
-    L2SchemaStrictMismatchTestCase()
+    SchemaStrictMismatchTestCase()
         : TestCase("L2 schema strict: mismatched hash rejects opener with ProtocolMismatch")
     {
     }
@@ -499,7 +640,6 @@ class L2SchemaStrictMismatchTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("l2-schema-mismatch"));
         RemoveSegment(names);
 
-        // Creator: Strict 模式，cpp2py_schema_hash=0xAAAA
         Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
@@ -511,12 +651,10 @@ class L2SchemaStrictMismatchTestCase : public TestCase
             0xAAAA, 0xBBBB, 1, 1,
             Ns3AiSchemaValidationMode::Strict);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
-            // Opener: 不匹配的 cpp2py hash → 构造应抛出异常
             bool caughtSchemaError = false;
             try
             {
@@ -538,14 +676,12 @@ class L2SchemaStrictMismatchTestCase : public TestCase
             _exit(caughtSchemaError ? 0 : 1);
         }
 
-        int status;
-        waitpid(pid, &status, 0);
-
-        NS_TEST_EXPECT_MSG_EQ(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+        NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0),
                               true,
-                              "Child must exit with code 0 (schema error caught)");
+                              "Child must catch Ns3AiSchemaError (exit code 0)");
 
-        // 子进程 catch 后 waitpid 确保 shared memory 写入已完成
+        // 子进程的 ThrowSchemaHeaderFailure → MarkPeerError(Py, ProtocolMismatch)
+        // 已在子进程 catch 前写入共享内存，waitpid 后父进程可见
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Error,
                               "Schema mismatch moves creator session to Error");
@@ -556,55 +692,106 @@ class L2SchemaStrictMismatchTestCase : public TestCase
 };
 
 /**
- * \brief L2 Peer early exit（ns-3 subprocess 在 session Ready 前退出）。
+ * \brief Baseline peer early exit：creator 在 session Ready 前退出。
  *
- * Child 作为 creator 创建共享内存后立即 _exit(0)（模拟 ns-3 进程崩溃），
- * Parent 作为 opener 打开后检测 Child 已死（heartbeat 检测到 PeerDeath）。
+ * 子进程创建裸共享内存段（仅 Boost managed_shared_memory，无 ns3-ai 对象），
+ * 然后 _exit() 模拟崩溃。父进程作为 opener 打开同一段时找不到
+ * 协议对象 → RequireNonNull 抛出 Ns3AiRuntimeError。
+ *
+ * 测试结束时父进程显式 RemoveSegment 防止泄漏。
  */
-class L2PeerEarlyExitTestCase : public TestCase
+class PeerEarlyExitBaselineTestCase : public TestCase
 {
   public:
-    L2PeerEarlyExitTestCase()
-        : TestCase("L2 peer early exit: creator exits before session Ready, opener detects PeerDeath")
+    PeerEarlyExitBaselineTestCase()
+        : TestCase("L2 peer early exit baseline: creator exits before init, opener throws")
     {
     }
 
   private:
     void DoRun() override
     {
-        constexpr uint64_t SYNC_TIMEOUT_US = 600000;   // 600 ms
-        constexpr uint64_t HB_PERIOD_US = 100000;      // 100 ms
-        constexpr uint64_t HB_TIMEOUT_US = 300000;     // 300 ms
-        constexpr uint64_t POLL_TIMEOUT_US = 5000000;  // 5 s
+        constexpr uint64_t SYNC_TIMEOUT_US = 100000;
 
-        const auto names = MakeTestNames(MakeUniqueSuffix("l2-early-exit"));
+        const auto names = MakeTestNames(MakeUniqueSuffix("l2-early-exit-base"));
         RemoveSegment(names);
 
-        pid_t pid = fork();
-        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork() must succeed");
+        const pid_t pid = ForkChild();
 
         if (pid == 0)
         {
-            // Child: 作为 creator 创建共享内存后立即退出
-            Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
-                true, false, true, 4096,
+            // Child: 只创建裸 Boost 共享内存段，不初始化任何 ns3-ai 协议对象
+            boost::interprocess::shared_memory_object::remove(
+                names.m_segmentName.c_str());
+            boost::interprocess::managed_shared_memory seg(
+                boost::interprocess::create_only,
+                names.m_segmentName.c_str(),
+                4096);
+            // seg 构造时创建了共享内存但内部为空（无 header/sync）
+            // _exit 不运行析构函数 → 段在 /dev/shm 中保留
+            _exit(0);
+        }
+
+        NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
+
+        // Parent: 尝试作为 opener 打开 → 段存在但找不到对象
+        bool caughtRuntimeError = false;
+        try
+        {
+            Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> opener(
+                false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
                 names.m_py2cppMsgName.c_str(),
                 names.m_lockableName.c_str(),
                 SYNC_TIMEOUT_US,
                 names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
-                HB_PERIOD_US, HB_TIMEOUT_US);
-            _exit(0);
+                0, 0);
+        }
+        catch (const Ns3AiRuntimeError&)
+        {
+            caughtRuntimeError = true;
         }
 
-        // Parent: 等待 child 退出后打开已创建的共享内存
-        int status;
-        waitpid(pid, &status, 0);
+        NS_TEST_EXPECT_MSG_EQ(caughtRuntimeError,
+                              true,
+                              "Opener must throw Ns3AiRuntimeError when shared-memory objects are missing");
 
-        // Parent 作为 opener 打开 segment。child 已完成初始化，session 可达 Ready。
-        Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> parent(
-            false, false, true, 4096,
+        // 显式清理共享内存
+        RemoveSegment(names);
+    }
+};
+
+/**
+ * \brief Silent peer death：真实 Python heartbeat publisher 停止后 C++ WaitForSync 检测 PeerDeath。
+ *
+ * 子进程以 50ms 间隔发布 heartbeat，持续 600ms 后退出。
+ * 父进程在子进程发布 heartbeat 期间进入 TryCppRecvBegin → WaitForSync，
+ * 观察到 Python heartbeat 活跃，然后子进程退出 → heartbeat 停止 →
+ * CheckPeerHeartbeat 检测 stall → PeerDeath。
+ */
+class HeartbeatSilentPeerDeathTestCase : public TestCase
+{
+  public:
+    HeartbeatSilentPeerDeathTestCase()
+        : TestCase("L2 heartbeat silent peer death: publisher stops, C++ detects PeerDeath")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint64_t SYNC_TIMEOUT_US = 2000000;  // 2s — > 心跳检测
+        constexpr uint64_t HB_PERIOD_US = 100000;      // 100ms
+        constexpr uint64_t HB_TIMEOUT_US = 300000;     // 300ms
+        constexpr uint64_t POLL_TIMEOUT_US = 5000000;
+
+        const auto names = MakeTestNames(MakeUniqueSuffix("l2-hb-peerdeath"));
+        RemoveSegment(names);
+
+        // Parent 作为 creator / C++ 等待方
+        Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
+            true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(),
@@ -613,25 +800,59 @@ class L2PeerEarlyExitTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             HB_PERIOD_US, HB_TIMEOUT_US);
 
-        const bool ready =
-            WaitForSessionState(parent, Ns3AiMsgSessionState::Ready, POLL_TIMEOUT_US);
-        NS_TEST_EXPECT_MSG_EQ(ready,
+        const pid_t pid = ForkChild();
+
+        if (pid == 0)
+        {
+            // Child 作为 opener / Python heartbeat publisher
+            Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> opener(
+                false, false, true, 4096,
+                names.m_segmentName.c_str(),
+                names.m_cpp2pyMsgName.c_str(),
+                names.m_py2cppMsgName.c_str(),
+                names.m_lockableName.c_str(),
+                SYNC_TIMEOUT_US,
+                names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+                HB_PERIOD_US, HB_TIMEOUT_US);
+
+            // 以 50ms 间隔发布 12 次 heartbeat（共 600ms），然后静默退出
+            for (int i = 0; i < 12; i++)
+            {
+                opener.HeartbeatPublish();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            _exit(0);
+        }
+
+        // Parent: 等待 child 打开
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_EXPECT_MSG_EQ(active,
                               true,
-                              "Session reaches Ready despite creator early exit");
+                              "Session must be Ready or Running before heartbeat test");
 
-        // 尝试接收数据 → child 已死，heartbeat 应检测到 PeerDeath
-        const bool result = parent.TryCppRecvBegin();
+        // 进入 C++ wait 模式：WaitForSync 会检查 Python heartbeat counter
+        // child 在前 600ms 活跃地发布 heartbeat，然后退出
+        // CheckPeerHeartbeat 在 child 退出后经 HB_TIMEOUT_US (300ms) 检测 stall
+        const bool result = creator.TryCppRecvBegin();
 
-        NS_TEST_EXPECT_MSG_EQ(result, false,
+        NS_TEST_EXPECT_MSG_EQ(result,
+                              false,
                               "TryCppRecvBegin returns false on PeerDeath");
-        NS_TEST_EXPECT_MSG_EQ(parent.GetSessionState(),
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Error,
-                              "PeerDeath detection moves session to Error");
-        NS_TEST_EXPECT_MSG_EQ(parent.GetErrorReason(),
+                              "PeerDeath moves session to Error");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
                               Ns3AiMsgErrorReason::PeerDeath,
-                              "Error reason is PeerDeath when creator is gone");
+                              "Error reason is PeerDeath when heartbeat publisher stops");
+
+        NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
     }
 };
+
+// ================================================================
+// TestSuite 注册
+// ================================================================
 
 class L2IntegrationTestSuite : public TestSuite
 {
@@ -639,13 +860,15 @@ class L2IntegrationTestSuite : public TestSuite
     L2IntegrationTestSuite()
         : TestSuite("ns3-ai-l2-integration", UNIT)
     {
-        AddTestCase(new L2IpcTimeoutRealPathTestCase, TestCase::QUICK);
-        AddTestCase(new L2RunningStateReachableTestCase, TestCase::QUICK);
-        AddTestCase(new L2CloseHandshakeCppToPyTestCase, TestCase::QUICK);
-        AddTestCase(new L2CloseHandshakePyToCppTestCase, TestCase::QUICK);
-        AddTestCase(new L2SchemaStrictMatchTestCase, TestCase::QUICK);
-        AddTestCase(new L2SchemaStrictMismatchTestCase, TestCase::QUICK);
-        AddTestCase(new L2PeerEarlyExitTestCase, TestCase::QUICK);
+        AddTestCase(new NoOpenerJoinRejectedTestCase, TestCase::QUICK);
+        AddTestCase(new IpcRecvTimeoutAfterOpenerExitTestCase, TestCase::QUICK);
+        AddTestCase(new RunningStateReachableTestCase, TestCase::QUICK);
+        AddTestCase(new CloseHandshakeCppToPyTestCase, TestCase::QUICK);
+        AddTestCase(new CloseHandshakePyToCppTestCase, TestCase::QUICK);
+        AddTestCase(new SchemaStrictMatchTestCase, TestCase::QUICK);
+        AddTestCase(new SchemaStrictMismatchTestCase, TestCase::QUICK);
+        AddTestCase(new PeerEarlyExitBaselineTestCase, TestCase::QUICK);
+        AddTestCase(new HeartbeatSilentPeerDeathTestCase, TestCase::QUICK);
     }
 };
 
