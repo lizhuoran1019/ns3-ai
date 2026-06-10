@@ -112,6 +112,30 @@ _Avoid_: 关闭告警、静默跳过
 PRD #52 定义的跨语言兼容性测试分层，按隔离程度从低到高：L0 C++ headless 单元测试、L1 Python wrapper 单元测试（mock 后端）、L2 Python 集成测试（同进程真实共享内存）、L3 Gym protocol 测试（仅未来引入 Gym protocol 兼容性时适用）。按 seam 分层保证测试不依赖外部进程且不互相干扰。
 _Avoid_: 端到端集成测试作为唯一验证手段
 
+**Gym Mock 测试（Gym Mock Test）**：
+归属于 L1 测试接缝的 Gym 环境 mock 测试，放置在 `python_utils/tests/test_ns3ai_gym_env_mock.py`。测试跨包导入 `model/gym-interface/py` 下的 `Ns3Env`，但导入路径依赖仅限于测试层，不污染包实现。mock 测试模拟 raw pybind 接口，不依赖共享内存、ns-3 二进制或 Gym binding 构建产物。
+_Avoid_: 在 Gym 接口包内新建测试套件
+
+**reset_required 即 isGameOver**：
+Issue 中 "reset_required signal" 是需求描述用语，不是代码实体。在 `Ns3Env` 中终止/重置信号由 `EnvStateMsg.isGameOver` 承载。mock 测试不应新增 `reset_required` 协议字段，只验证 `isGameOver=True` 时 `reset()` 的正确行为。测试命名应当使用 `game_over` 而非 `reset_required`。
+_Avoid_: 新增协议字段、在测试命名中使用 reset_required
+
+**Gym Mock 的 mock 深度**：
+Gym L1 mock 测试在 `Ns3AiMsgInterface` 层切入，以 `autoStart=False` 构造 `Ns3Env` 后手动替换 `env.msgInterface`。mock 目标仅限于 `PyRecvBegin`/`PyRecvEnd`/`PySendBegin`/`PySendEnd`/`GetCpp2PyStruct`/`GetPy2CppStruct` 六个方法，protobuf 载荷真实构造（`SimInitMsg.SerializeToString()`、`EnvStateMsg.SerializeToString()`）。不在行为层 mock `py_binding`；仅允许 import-time fake module shim，用于规避未构建 `.so` 的导入依赖。不全 mock `Experiment.run()`（reset 测试中通过 `mock.patch.object(env.exp, 'run')` 拦截，不 mock 整个 Experiment 类）。
+_Avoid_: 在行为层 mock py_binding 返回值、全 mock Experiment.run()
+
+**Gym Mock 使用自定义 FakeGymInterface**：
+Gym mock 测试使用自定义 `FakeGymInterface` 类而非 `unittest.mock.Mock`。内部维护 `_read_q` 读取队列（预装 protobuf 字节，按调用顺序 pop）和 `writes` 写回追踪列表。`GetCpp2PyStruct().get_buffer()` 从队列弹出下一 payload，`GetPy2CppStruct().get_buffer_full()` 捕获 Python 侧写回的 protobuf 字节。每步后通过 `fake_interface.writes[-1]` / `fake_interface.last_written` 断言 action、ack、stopSimReq。
+_Avoid_: 使用 unittest.mock 链式调用模拟有状态 Gym 协议
+
+**编译期依赖隔离（Gym Mock）**：
+Gym mock 测试在 import `Ns3Env` 前通过 `sys.modules["ns3ai_gym_env.ns3ai_gym_msg_py"]` 注入 fake py_binding，规避真实 pybind11 `.so` 的 import 依赖。fake 至少提供 `msg_buffer_size` 属性与 `Ns3AiMsgInterfaceImpl`（可调用类，构造方法为空，返回 mock 对象）。不从测试目录提交假 `.py` 文件，不修改生产代码的 import 结构。
+_Avoid_: 在生产代码中改为惰性 import、在源码树中提交伪造编译产物
+
+**Experiment 超时测试方案**：
+L1 超时测试使用真实短等待（`syncTimeoutUs=10_000` 即 10ms），子进程保持存活，`wait_ready()` 持续抛出 `Ns3AiSessionTimeoutError`，`_wait_ready_or_subprocess_exit()` 在 deadline 后重新抛出同名异常。不 mock `time.monotonic()` 或 `time.sleep()`。
+_Avoid_: mock 时间函数、零等待超时测试
+
 ### 模式元数据
 
 **模式哈希（Schema Hash）**：

@@ -275,6 +275,20 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         self.assertIn("stdout", str(error.exception))
         self.assertIn("stderr", str(error.exception))
 
+    def test_experiment_run_times_out_when_session_never_ready(self):
+        raw_interface = FakeMessageInterface()
+        raw_interface.session_state = 0  # Init — never becomes Ready
+        msg_module = FakeMsgModule(raw_interface)
+        # Use a short but non-zero timeout so the deadline expires quickly
+        experiment = Experiment("target", ".", msg_module, syncTimeoutUs=10_000)
+
+        with mock.patch(
+            "ns3ai_utils.run_single_ns3",
+            return_value=("ns3 command", FakeProcess(returncode=None)),
+        ):
+            with self.assertRaises(Ns3AiSessionTimeoutError):
+                experiment.run()
+
     def test_experiment_resolves_relative_ns3_path_from_current_working_directory(self):
         raw_interface = FakeMessageInterface()
         msg_module = FakeMsgModule(raw_interface)
