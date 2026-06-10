@@ -22,6 +22,7 @@ import shlex
 import subprocess
 import psutil
 import sys
+import threading
 import time
 import warnings
 from enum import IntEnum
@@ -116,6 +117,8 @@ class Ns3AiMsgInterface:
                          py2cpp_msg_name="My Python to Cpp Msg",
                          lockable_name="My Lockable",
                          sync_timeout_us=None,
+                         heartbeat_period_us=1000000,
+                         heartbeat_timeout_us=3000000,
                          header_name="My Header",
                          cpp2py_schema_hash=None,
                          py2cpp_schema_hash=None,
@@ -168,6 +171,8 @@ class Ns3AiMsgInterface:
             cpp2py_schema_version,
             py2cpp_schema_version,
             mode_enum,
+            heartbeat_period_us,
+            heartbeat_timeout_us,
         ),
                    ns3ai_error_type=getattr(msg_module, 'Ns3AiError', None))
 
@@ -250,6 +255,63 @@ class Ns3AiMsgInterface:
 
     def PyGetFinished(self):
         return self._call_raw('PyGetFinished')
+
+    def start_heartbeat_publisher(self, period_us=1000000):
+        """启动后台 daemon 线程，按 period_us 间隔调用 HeartbeatPublish()。
+
+        幂等安全：重复调用不会创建多余线程。
+        当 period_us 小于 100000 或大于 60000000 时抛出 ValueError。
+        """
+        if not (100000 <= period_us <= 60000000):
+            raise ValueError(
+                'ns3ai_utils: heartbeat_period_us={} is out of range [100000, 60000000]'.format(
+                    period_us))
+        if not hasattr(self, '_hb_lock'):
+            self._hb_lock = threading.Lock()
+        with self._hb_lock:
+            if getattr(self, '_hb_thread', None) is not None and self._hb_thread.is_alive():
+                return  # 已启动，幂等返回
+
+            self._hb_stop = threading.Event()
+
+            def _publish():
+                stop = self._hb_stop
+                while True:
+                    if stop.wait(period_us / 1_000_000):
+                        break  # stop 信号触发，退出
+                    raw = self._raw_interface
+                    if raw is None:
+                        break
+                    try:
+                        raw.HeartbeatPublish()
+                    except Exception:
+                        break
+
+            self._hb_thread = threading.Thread(target=_publish, daemon=True)
+            self._hb_thread.start()
+
+    def stop_heartbeat_publisher(self):
+        """停止后台 daemon 线程。幂等安全。"""
+        if not hasattr(self, '_hb_lock'):
+            self._hb_lock = threading.Lock()
+        with self._hb_lock:
+            hb_stop = getattr(self, '_hb_stop', None)
+            hb_thread = getattr(self, '_hb_thread', None)
+            if hb_stop is not None:
+                hb_stop.set()
+            if hb_thread is not None and hb_thread.is_alive():
+                hb_thread.join(timeout=2)
+            self._hb_thread = None
+            self._hb_stop = None
+
+    def close(self):
+        """关闭会话：先停心跳，再释放 raw_interface。"""
+        self.stop_heartbeat_publisher()
+        self._raw_interface = None
+
+    def __del__(self):
+        """析构时确保心跳线程停止。"""
+        self.stop_heartbeat_publisher()
 
     def GetCpp2PyStruct(self):
         return self._raw_interface.GetCpp2PyStruct()
@@ -398,6 +460,8 @@ class Experiment:
                  py2cppMsgName="My Python to Cpp Msg",
                  lockableName="My Lockable",
                  syncTimeoutUs=None,
+                 heartbeatPeriodUs=1000000,
+                 heartbeatTimeoutUs=3000000,
                  headerName="My Header",
                  cpp2pySchemaHash=None,
                  py2cppSchemaHash=None,
@@ -413,6 +477,8 @@ class Experiment:
         self.useVector = useVector
         self.vectorSize = vectorSize
         self.shmSize = shmSize
+        self.heartbeatPeriodUs = heartbeatPeriodUs
+        self.heartbeatTimeoutUs = heartbeatTimeoutUs
         if shmPrefix is not None:
             names = make_shm_names(shmPrefix)
             segName = names['segName']
@@ -445,6 +511,8 @@ class Experiment:
             py2cpp_msg_name=self.py2cppMsgName,
             lockable_name=self.lockableName,
             sync_timeout_us=self.syncTimeoutUs,
+            heartbeat_period_us=self.heartbeatPeriodUs,
+            heartbeat_timeout_us=self.heartbeatTimeoutUs,
             header_name=self.headerName,
             cpp2py_schema_hash=self.cpp2pySchemaHash,
             py2cpp_schema_hash=self.py2cppSchemaHash,
@@ -482,9 +550,16 @@ class Experiment:
             self.ns3Path, self.targetName, setting=setting, env=run_env, show_output=show_output)
         print("ns3ai_utils: Running ns-3 with: ", self.simCmd)
         self._wait_ready_or_subprocess_exit()
+        # 心跳启用了 publisher 则自动启动
+        if self.heartbeatPeriodUs > 0:
+            self.msgInterface.start_heartbeat_publisher(period_us=self.heartbeatPeriodUs)
         return self.msgInterface
 
     def kill(self):
+        try:
+            self.msgInterface.stop_heartbeat_publisher()
+        except Exception:
+            pass
         if self.proc and self.isalive():
             kill_proc_tree(self.proc)
             self.proc = None
@@ -524,6 +599,8 @@ class ParallelExperiment:
                  useVector=False, vectorSize=None,
                  shmSize=4096,
                  syncTimeoutUs=None,
+                 heartbeatPeriodUs=1000000,
+                 heartbeatTimeoutUs=3000000,
                  cpp2pySchemaHash=None,
                  py2cppSchemaHash=None,
                  cpp2pySchemaVersion=None,
@@ -543,6 +620,8 @@ class ParallelExperiment:
                            vectorSize=vectorSize,
                            shmSize=shmSize,
                            syncTimeoutUs=syncTimeoutUs,
+                           heartbeatPeriodUs=heartbeatPeriodUs,
+                           heartbeatTimeoutUs=heartbeatTimeoutUs,
                            cpp2pySchemaHash=cpp2pySchemaHash,
                            py2cppSchemaHash=py2cppSchemaHash,
                            cpp2pySchemaVersion=cpp2pySchemaVersion,
