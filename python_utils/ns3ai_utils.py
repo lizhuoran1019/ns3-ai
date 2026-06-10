@@ -22,6 +22,7 @@ import shlex
 import subprocess
 import psutil
 import sys
+import threading
 import time
 import warnings
 from enum import IntEnum
@@ -250,6 +251,30 @@ class Ns3AiMsgInterface:
 
     def PyGetFinished(self):
         return self._call_raw('PyGetFinished')
+
+    def start_heartbeat_publisher(self, period_us=1000000):
+        """启动后台 daemon 线程，按 period_us 间隔调用 HeartbeatPublish()。"""
+        self._hb_stop = threading.Event()
+
+        def _publish():
+            while not self._hb_stop.is_set():
+                self._raw_interface.HeartbeatPublish()
+                time.sleep(period_us / 1_000_000)
+
+        self._hb_thread = threading.Thread(target=_publish, daemon=True)
+        self._hb_thread.start()
+
+    def stop_heartbeat_publisher(self):
+        """停止后台 daemon 线程。"""
+        if hasattr(self, '_hb_stop'):
+            self._hb_stop.set()
+        if hasattr(self, '_hb_thread') and self._hb_thread.is_alive():
+            self._hb_thread.join(timeout=2)
+
+    def close(self):
+        """关闭会话：先停心跳，再释放 raw_interface。"""
+        self.stop_heartbeat_publisher()
+        self._raw_interface = None
 
     def GetCpp2PyStruct(self):
         return self._raw_interface.GetCpp2PyStruct()

@@ -86,7 +86,9 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
                       uint64_t,
                       uint32_t,
                       uint32_t,
-                      ns3::Ns3AiSchemaValidationMode>(),
+                      ns3::Ns3AiSchemaValidationMode,
+                      uint64_t,
+                      uint64_t>(),
              py::arg("is_memory_creator"),
              py::arg("use_vector"),
              py::arg("handle_finish"),
@@ -101,7 +103,9 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
              py::arg("py2cpp_schema_hash") = NS3_AI_GYM_MSG_SCHEMA_HASH,
              py::arg("cpp2py_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION,
              py::arg("py2cpp_schema_version") = NS3_AI_GYM_MSG_SCHEMA_VERSION,
-             py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict)
+             py::arg("schema_validation_mode") = ns3::Ns3AiSchemaValidationMode::Strict,
+             py::arg("heartbeat_period_us") = 1000000,
+             py::arg("heartbeat_timeout_us") = 3000000)
         .def("GetSessionState",
              [](const GymMsgInterface& interface) {
                  return static_cast<uint8_t>(interface.GetSessionState());
@@ -138,6 +142,7 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
         .def("PyRecvEnd", &GymMsgInterface::PyRecvEnd)
         .def("PySendBegin", &GymMsgInterface::PySendBegin)
         .def("PySendEnd", &GymMsgInterface::PySendEnd)
+        .def("HeartbeatPublish", &GymMsgInterface::HeartbeatPublish)
         .def("GetCpp2PyStruct", &GymMsgInterface::GetCpp2PyStruct, py::return_value_policy::reference)
         .def("GetPy2CppStruct", &GymMsgInterface::GetPy2CppStruct, py::return_value_policy::reference);
 }

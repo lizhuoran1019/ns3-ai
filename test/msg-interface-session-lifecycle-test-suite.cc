@@ -13,9 +13,11 @@
 
 #include <unistd.h>
 
+#include <atomic>
 #include <exception>
 #include <sstream>
 #include <string>
+#include <thread>
 
 using namespace ns3;
 
@@ -844,6 +846,171 @@ class SessionPyGetFinishedForwardTestCase : public TestCase
     }
 };
 
+/**
+ * \brief 心跳维持下 WaitForSync 正常超时而非误判为 PeerDeath。
+ *
+ * 通过辅助线程定期发布 Python 心跳 counter 模拟 Python 侧存活，
+ * 验证 WaitForSync 不会在 heartbeat_timeout_us 内误触发 PeerDeath。
+ */
+class SessionHeartbeatNormalLivenessTestCase : public TestCase
+{
+  public:
+    SessionHeartbeatNormalLivenessTestCase()
+        : TestCase("heartbeat normal liveness: periodic publish prevents PeerDeath")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("hb-liveness"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            600000,           // sync_timeout_us = 600ms
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            100000,           // heartbeat_period_us = 100ms (min allowed)
+            300000);          // heartbeat_timeout_us = 300ms (min: max(3×100ms, 300ms))
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            600000,
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            100000,
+            300000);
+
+        // 辅助线程每 50ms 发布 Python 心跳，模拟 Python 侧存活
+        std::atomic<bool> stopFlag{false};
+        std::thread hbThread([&opener, &stopFlag]() {
+            while (!stopFlag.load(std::memory_order_acquire))
+            {
+                opener.HeartbeatPublish();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+        // TryCppRecvBegin 等待 m_py2cppFullCount（初始 0），
+        // 心跳持续发布 → 不触发 PeerDeath → 最终 sync_timeout → Timeout
+        const bool result = creator.TryCppRecvBegin();
+        stopFlag.store(true, std::memory_order_release);
+        hbThread.join();
+
+        NS_TEST_EXPECT_MSG_EQ(result, false,
+                              "TryCppRecvBegin returns false on sync timeout with heartbeat liveness");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "Sync timeout moves session to Error despite heartbeat liveness");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Error reason is Timeout (not PeerDeath) when heartbeat is alive");
+    }
+};
+
+/**
+ * \brief 对端心跳停止后 WaitForSync 检测到 PeerDeath。
+ *
+ * 不启动心跳发布线程 → m_pyHeartbeatCounter 永远为 0 → C++ WaitForSync
+ * 在 heartbeat_timeout_us 内检测到 Python 侧死亡 → MarkPeerError(Py, PeerDeath)。
+ */
+class SessionHeartbeatPeerDeathDetectionTestCase : public TestCase
+{
+  public:
+    SessionHeartbeatPeerDeathDetectionTestCase()
+        : TestCase("heartbeat peer death: stalled counter triggers PeerDeath")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("hb-peerdeath"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            600000,           // sync_timeout_us = 600ms (> heartbeat_timeout_us)
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            100000,           // heartbeat_period_us = 100ms (min allowed)
+            300000);          // heartbeat_timeout_us = 300ms
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            600000,
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            100000,
+            300000);
+
+        // 不启动心跳发布线程 → Python counter 永远为 0
+        const bool result = creator.TryCppRecvBegin();
+
+        NS_TEST_EXPECT_MSG_EQ(result, false,
+                              "TryCppRecvBegin returns false on PeerDeath detection");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "PeerDeath moves session to Error");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::PeerDeath,
+                              "Error reason is PeerDeath when peer heartbeat stalls");
+    }
+};
+
+/**
+ * \brief 心跳 0 值禁用时保持向后兼容：仍为普通 Timeout 行为。
+ *
+ * heartbeat_period_us=0, heartbeat_timeout_us=0 → 心跳完全禁用，
+ * 退化为原有 sync_timeout 行为。
+ */
+class SessionHeartbeatDisableByZeroTestCase : public TestCase
+{
+  public:
+    SessionHeartbeatDisableByZeroTestCase()
+        : TestCase("heartbeat disabled by zero configs acts as normal timeout")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto names = MakeTestNames(MakeUniqueSuffix("hb-disabled"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000,             // sync_timeout_us = 1ms
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            0,                // heartbeat_period_us = 0 (disabled)
+            0);               // heartbeat_timeout_us = 0 (disabled)
+        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            false, false, true, 4096,
+            names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
+            1000,
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            0,
+            0);
+
+        const bool result = creator.TryCppRecvBegin();
+
+        NS_TEST_EXPECT_MSG_EQ(result, false,
+                              "TryCppRecvBegin returns false on timeout with heartbeat disabled");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Error,
+                              "Timeout moves session to Error (heartbeat disabled)");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::Timeout,
+                              "Error reason is Timeout when heartbeat is disabled");
+    }
+};
+
 class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
 {
   public:
@@ -863,6 +1030,9 @@ class MsgInterfaceSessionLifecycleTestSuite : public TestSuite
         AddTestCase(new SessionTryCppSendBeginTimeoutTestCase, TestCase::QUICK);
         AddTestCase(new SessionCppSendBeginTimeoutDiagnosticTextTestCase, TestCase::QUICK);
         AddTestCase(new SessionPyGetFinishedForwardTestCase, TestCase::QUICK);
+        AddTestCase(new SessionHeartbeatNormalLivenessTestCase, TestCase::QUICK);
+        AddTestCase(new SessionHeartbeatPeerDeathDetectionTestCase, TestCase::QUICK);
+        AddTestCase(new SessionHeartbeatDisableByZeroTestCase, TestCase::QUICK);
     }
 };
 
