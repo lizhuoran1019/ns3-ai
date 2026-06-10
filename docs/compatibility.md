@@ -198,6 +198,8 @@ m.attr("schema_version") = ENV_STRUCT_SCHEMA_VERSION;
 
 `NS3_AI_MSG_ABI_VERSION`（当前值：1）仅在共享内存协议头（`Ns3AiMsgProtocolHeader`）或同步区域（`Ns3AiMsgSync`）的二进制布局变化时才需要修改。这是极低频操作，通常只发生在 ns3-ai 核心开发中。
 
+> **注意**：ADR 0005 设计的心跳协议将在实现时（#48）在 `Ns3AiMsgSync` 末尾新增 2 个 `atomic<uint64_t>` 字段，届时需递增 `NS3_AI_MSG_ABI_VERSION` 至 2。本 ADR 为设计决策记录，不修改当前 ABI 版本。
+
 ### ABI 变更门禁
 
 修改涉及共享内存 layout 的代码（如向 `Ns3AiMsgSync` 或 `Ns3AiMsgProtocolHeader` 增删字段）时，必须同时触发以下门禁：
