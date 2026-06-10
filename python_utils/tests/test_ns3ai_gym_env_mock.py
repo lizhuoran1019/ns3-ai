@@ -1,4 +1,5 @@
 import sys
+import types
 from pathlib import Path
 from unittest import mock
 
@@ -43,7 +44,7 @@ class _FakeMsgInterfaceImpl:
         pass
 
 
-_fake_py_binding = mock.MagicMock()
+_fake_py_binding = types.ModuleType('ns3ai_gym_env.ns3ai_gym_msg_py')
 _fake_py_binding.msg_buffer_size = 1024 * 1024
 _fake_py_binding.Ns3AiMsgInterfaceImpl = _FakeMsgInterfaceImpl
 sys.modules["ns3ai_gym_env.ns3ai_gym_msg_py"] = _fake_py_binding
@@ -180,7 +181,7 @@ class Ns3EnvMockTest(unittest.TestCase):
         self.assertFalse(env.is_game_over())
 
     def test_step_cycle_happy_path(self):
-        sim_init = _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0)
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
         state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0,
                                           is_game_over=False, sequence=0)
         state_seq1 = _make_env_state_msg(obs_value=1, reward=0.5,
@@ -200,6 +201,7 @@ class Ns3EnvMockTest(unittest.TestCase):
         self.assertEqual(reward, 0.5)
         self.assertFalse(terminated)
         self.assertFalse(env.is_game_over())
+        self.assertTrue(env.envDirty)
 
         # 验证写回：第1次 SimInitAck, 第2次 EnvActMsg
         act = pb.EnvActMsg()
@@ -213,7 +215,7 @@ class Ns3EnvMockTest(unittest.TestCase):
         self.assertEqual(discrete_act.data, 0)
 
     def test_step_with_game_over_returns_terminated(self):
-        sim_init = _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0)
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
         state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0,
                                           is_game_over=False, sequence=0)
         state_seq1 = _make_env_state_msg(obs_value=1, reward=0.5,
@@ -232,6 +234,7 @@ class Ns3EnvMockTest(unittest.TestCase):
         self.assertEqual(reward, 0.5)
         self.assertTrue(terminated)
         self.assertTrue(env.is_game_over())
+        self.assertTrue(env.envDirty)
 
         # 写回序列：SimInitAck → EnvActMsg(action) → EnvActMsg(stopSimReq)
         act = pb.EnvActMsg()
@@ -246,7 +249,7 @@ class Ns3EnvMockTest(unittest.TestCase):
     def test_reset_after_game_over_reinitializes_environment(self):
         """验证 reset() 在 game over 后重新初始化并返回新 observation"""
         # ── 第一轮 session payload ──
-        sim_init = _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0)
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
         state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0,
                                           is_game_over=False, sequence=0)
         state_seq1 = _make_env_state_msg(obs_value=1, reward=0.5,
@@ -254,7 +257,7 @@ class Ns3EnvMockTest(unittest.TestCase):
         fake1 = FakeGymInterface([sim_init, state_seq0, state_seq1])
 
         # ── reset 后第二轮 session payload ──
-        reset_init = _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0)
+        reset_init = _make_discrete_init_msg(n_obs=11, n_act=1, sequence=0)
         reset_state = _make_env_state_msg(obs_value=10, reward=0.0,
                                            is_game_over=False, sequence=0)
         fake2 = FakeGymInterface([reset_init, reset_state])
