@@ -233,8 +233,11 @@ struct Ns3AiMsgSync
     std::atomic<uint8_t> m_lastErrorCode{0};
 
     // padding (2 bytes at offset 14-15, for 8-byte alignment of uint64_t)
-    // Heartbeat counters: bidirectional monotonically-increasing counters
-    // for peer-liveness detection during WaitForSync.
+    // Per-peer heartbeat counters. Only m_pyHeartbeatCounter is currently used
+    // for peer-death detection (C++ WaitForSync checks Python publisher liveness).
+    // m_cppHeartbeatCounter is published by C++ WaitForSync for future observability.
+    // Python wait path must NOT use m_cppHeartbeatCounter to判死 C++,
+    // because C++ may be computing outside WaitForSync (no counter advancement).
     std::atomic<uint64_t> m_cppHeartbeatCounter{0}; // offset 16, C++ 端写入
     std::atomic<uint64_t> m_pyHeartbeatCounter{0};  // offset 24, Python 端写入
 };
