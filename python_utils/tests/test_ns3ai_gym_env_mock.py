@@ -2,12 +2,11 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import numpy as np
-
 # ── sys.path 注入：使 model/gym-interface/py 可导入 ──
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_GYM_PY_DIR = _REPO_ROOT / "contrib" / "ai" / "model" / "gym-interface" / "py"
-sys.path.insert(0, str(_GYM_PY_DIR))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_GYM_PY_DIR = _REPO_ROOT / "model" / "gym-interface" / "py"
+if str(_GYM_PY_DIR) not in sys.path:
+    sys.path.insert(0, str(_GYM_PY_DIR))
 
 
 # ── sys.modules 注入：mock 掉 pybind11 编译产物 ──
@@ -149,7 +148,7 @@ def _make_env_state_msg(obs_value=0, reward=0.0, is_game_over=False, sequence=0)
 
 class Ns3EnvMockTest(unittest.TestCase):
 
-    def test_start_initializes_spaces_and_receives_initial_state(self):
+    def test_initialize_env_sets_up_spaces_and_receives_state(self):
         sim_init_payload = _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0)
         init_state_payload = _make_env_state_msg(obs_value=0, reward=0.0,
                                                   is_game_over=False, sequence=0)
@@ -207,6 +206,11 @@ class Ns3EnvMockTest(unittest.TestCase):
         act.ParseFromString(fake.writes[1])
         self.assertEqual(act.sequence, 0)
         self.assertFalse(act.stopSimReq)
+        # 验证 action payload 序列化正确（step(0) 传入 Discrete action=0）
+        self.assertEqual(act.actData.type, pb.Discrete)
+        discrete_act = pb.DiscreteDataContainer()
+        act.actData.data.Unpack(discrete_act)
+        self.assertEqual(discrete_act.data, 0)
 
     def test_step_with_game_over_returns_terminated(self):
         sim_init = _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0)
