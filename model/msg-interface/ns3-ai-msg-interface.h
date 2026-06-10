@@ -1190,14 +1190,23 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
                                             Ns3AiMsgPeer waitingPeer)
     {
         const auto hbStart = std::chrono::steady_clock::now();
+        auto lastHbPublish = hbStart;
         uint32_t attempts = 0;
 
         while (true)
         {
-            // 1. Publish self (waitingPeer) heartbeat counter
+            // 1. Publish self (waitingPeer) heartbeat counter at configured period.
+            //    仅当距上次发布 >= m_heartbeatPeriodUs 时才写，防止高频自旋空写。
             if (m_heartbeatPeriodUs > 0)
             {
-                PublishSelfHeartbeat(waitingPeer);
+                const auto now = std::chrono::steady_clock::now();
+                const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                    now - lastHbPublish);
+                if (static_cast<uint64_t>(elapsed.count()) >= m_heartbeatPeriodUs)
+                {
+                    PublishSelfHeartbeat(waitingPeer);
+                    lastHbPublish = now;
+                }
             }
 
             // 2. Try acquire semaphore
@@ -1259,52 +1268,49 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     };
 
     /**
-     * 检查对端心跳计数器是否停滞。
-     * 等待方 = waitingPeer → 对端 = 另一侧。
-     * \return true 表示对端活跃或心跳已禁用；false 表示检测到对端死亡并已标记错误。
+     * 检查 Python 对端心跳计数器是否停滞（单向检测）。
+     *
+     * 当前设计仅支持 C++ 作为等待方时检测 Python 侧心跳，不支持
+     * 反向（Python 检测 C++）。原因：C++ 不在 WaitForSync 中时
+     * 不发布心跳，无法区分 "正在计算" 和 "进程死亡"。
+     *
+     * \return true 表示 Python 对端活跃或心跳已禁用；
+     *         false 表示检测到 Python 死亡并已标记 PeerDeath。
      */
     bool CheckPeerHeartbeat(Ns3AiMsgPeer waitingPeer)
     {
+        (void)waitingPeer;
         if (m_heartbeatTimeoutUs == 0)
         {
             return true;
         }
 
-        // 选择对端计数器、对端身份、以及本端追踪状态
-        const bool isCppWaiting = (waitingPeer == Ns3AiMsgPeer::Cpp);
-        const std::atomic<uint64_t>& peerCounter =
-            isCppWaiting ? m_sync->m_pyHeartbeatCounter : m_sync->m_cppHeartbeatCounter;
-        const Ns3AiMsgPeer peerToBlame = isCppWaiting ? Ns3AiMsgPeer::Py : Ns3AiMsgPeer::Cpp;
-        uint64_t& lastCnt = isCppWaiting ? m_cppObservedPyCount : m_pyObservedCppCount;
-        std::chrono::steady_clock::time_point& lastTime =
-            isCppWaiting ? m_cppObservedPyTime : m_pyObservedCppTime;
-        bool& initialized = isCppWaiting ? m_cppObservingPy : m_pyObservingCpp;
-
-        const uint64_t peerCnt = peerCounter.load(std::memory_order_acquire);
+        // 始终检查 Python 对端计数器 m_pyHeartbeatCounter，归因 Py
+        const uint64_t peerCnt = m_sync->m_pyHeartbeatCounter.load(std::memory_order_acquire);
         const auto now = std::chrono::steady_clock::now();
 
-        if (!initialized)
+        if (!m_cppObservingPy)
         {
-            lastCnt = peerCnt;
-            lastTime = now;
-            initialized = true;
+            m_cppObservedPyCount = peerCnt;
+            m_cppObservedPyTime = now;
+            m_cppObservingPy = true;
             return true;
         }
 
-        if (peerCnt == lastCnt)
+        if (peerCnt == m_cppObservedPyCount)
         {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                now - lastTime);
+                now - m_cppObservedPyTime);
             if (static_cast<uint64_t>(elapsed.count()) >= m_heartbeatTimeoutUs)
             {
-                MarkPeerError(peerToBlame, Ns3AiMsgErrorReason::PeerDeath);
+                MarkPeerError(Ns3AiMsgPeer::Py, Ns3AiMsgErrorReason::PeerDeath);
                 return false;
             }
         }
         else
         {
-            lastCnt = peerCnt;
-            lastTime = now;
+            m_cppObservedPyCount = peerCnt;
+            m_cppObservedPyTime = now;
         }
         return true;
     };
@@ -1898,14 +1904,10 @@ class Ns3AiMsgInterfaceImpl : public Ns3AiMsgInterfaceBase
     const uint64_t m_syncTimeoutUs;
     const uint64_t m_heartbeatPeriodUs;
     const uint64_t m_heartbeatTimeoutUs;
-    // C++ 作为等待方时追踪 Python 心跳
+    // C++ 作为等待方时追踪 Python 心跳（单向检测，仅此方向活跃）
     uint64_t m_cppObservedPyCount{0};
     std::chrono::steady_clock::time_point m_cppObservedPyTime;
     bool m_cppObservingPy{false};
-    // Python 作为等待方时追踪 C++ 心跳
-    uint64_t m_pyObservedCppCount{0};
-    std::chrono::steady_clock::time_point m_pyObservedCppTime;
-    bool m_pyObservingCpp{false};
     const uint64_t m_cpp2pySchemaHash;
     const uint64_t m_py2cppSchemaHash;
     const uint32_t m_cpp2pySchemaVersion;

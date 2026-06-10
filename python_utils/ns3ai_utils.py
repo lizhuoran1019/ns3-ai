@@ -275,16 +275,17 @@ class Ns3AiMsgInterface:
             self._hb_stop = threading.Event()
 
             def _publish():
-                raw = self._raw_interface
                 stop = self._hb_stop
-                while not stop.is_set():
+                while True:
+                    if stop.wait(period_us / 1_000_000):
+                        break  # stop 信号触发，退出
+                    raw = self._raw_interface
                     if raw is None:
                         break
                     try:
                         raw.HeartbeatPublish()
                     except Exception:
                         break
-                    time.sleep(period_us / 1_000_000)
 
             self._hb_thread = threading.Thread(target=_publish, daemon=True)
             self._hb_thread.start()
@@ -295,11 +296,13 @@ class Ns3AiMsgInterface:
             self._hb_lock = threading.Lock()
         with self._hb_lock:
             hb_stop = getattr(self, '_hb_stop', None)
+            hb_thread = getattr(self, '_hb_thread', None)
             if hb_stop is not None:
                 hb_stop.set()
-            hb_thread = getattr(self, '_hb_thread', None)
             if hb_thread is not None and hb_thread.is_alive():
                 hb_thread.join(timeout=2)
+            self._hb_thread = None
+            self._hb_stop = None
 
     def close(self):
         """关闭会话：先停心跳，再释放 raw_interface。"""
