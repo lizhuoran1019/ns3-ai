@@ -275,6 +275,20 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
         self.assertIn("stdout", str(error.exception))
         self.assertIn("stderr", str(error.exception))
 
+    def test_experiment_run_times_out_when_session_never_ready(self):
+        raw_interface = FakeMessageInterface()
+        raw_interface.session_state = 0  # Init — never becomes Ready
+        msg_module = FakeMsgModule(raw_interface)
+        # Use a short but non-zero timeout so the deadline expires quickly
+        experiment = Experiment("target", ".", msg_module, syncTimeoutUs=10_000)
+
+        with mock.patch(
+            "ns3ai_utils.run_single_ns3",
+            return_value=("ns3 command", FakeProcess(returncode=None)),
+        ):
+            with self.assertRaises(Ns3AiSessionTimeoutError):
+                experiment.run()
+
     def test_experiment_resolves_relative_ns3_path_from_current_working_directory(self):
         raw_interface = FakeMessageInterface()
         msg_module = FakeMsgModule(raw_interface)
@@ -530,6 +544,147 @@ class Ns3AiMsgInterfaceLifecycleTest(unittest.TestCase):
 
         self.assertIs(opener.raw_interface, opener_raw)
         self.assertEqual(opener_module.constructor_args[0], False)
+
+
+class Ns3AiGymLifecycleMockTest(unittest.TestCase):
+    """Gym 收发周期与重置的 L1 mock 测试（wrapper 层，不依赖 ns-3 build artifact 或 protobuf）"""
+
+    def test_gym_step_cycle_receive_state_and_send_action(self):
+        """接收 state → 发送 action 的完整 Gym step 循环"""
+        state_data = b"state_data_42"
+        action_data = b"action_data_99"
+        action_buf = bytearray(1024)
+
+        raw = mock.MagicMock()
+        raw.GetSessionState.return_value = 1
+        raw.GetErrorReason.return_value = 0
+        raw.GetLastErrorPeer.return_value = 0
+        raw.GetCpp2PyStruct.return_value = state_data
+        raw.GetPy2CppStruct.return_value = action_buf
+
+        interface = Ns3AiMsgInterface(raw)
+
+        # Receive state from C++
+        interface.PyRecvBegin()
+        received = interface.GetCpp2PyStruct()
+        interface.PyRecvEnd()
+        self.assertEqual(received, state_data)
+
+        # Send action to C++
+        interface.PySendBegin()
+        buf = interface.GetPy2CppStruct()
+        buf[:len(action_data)] = action_data
+        interface.PySendEnd()
+
+        # Verify action data written to buffer
+        self.assertEqual(bytes(action_buf[:len(action_data)]), action_data)
+
+        # Verify call sequence
+        raw.PyRecvBegin.assert_called_once()
+        raw.GetCpp2PyStruct.assert_called()
+        raw.PyRecvEnd.assert_called_once()
+        raw.PySendBegin.assert_called_once()
+        raw.GetPy2CppStruct.assert_called()
+        raw.PySendEnd.assert_called_once()
+
+    def test_gym_step_cycle_multiple_iterations(self):
+        """多步 Gym step 循环：验证序列数据在 wrapper 层正确传递"""
+        states = [b"state_0", b"state_1", b"state_2"]
+        action_buffers = [bytearray(1024) for _ in range(3)]
+
+        raw = mock.MagicMock()
+        raw.GetSessionState.return_value = 1
+        raw.GetErrorReason.return_value = 0
+        raw.GetLastErrorPeer.return_value = 0
+        raw.GetCpp2PyStruct.side_effect = list(states)
+        raw.GetPy2CppStruct.side_effect = list(action_buffers)
+
+        interface = Ns3AiMsgInterface(raw)
+
+        for i, expected_state in enumerate(states):
+            # Receive state from C++
+            interface.PyRecvBegin()
+            received = interface.GetCpp2PyStruct()
+            interface.PyRecvEnd()
+            self.assertEqual(received, expected_state, "step {} state mismatch".format(i))
+
+            # Send action to C++
+            action = b"action_%d" % i
+            interface.PySendBegin()
+            buf = interface.GetPy2CppStruct()
+            buf[:len(action)] = action
+            interface.PySendEnd()
+
+            # Verify action written to correct buffer
+            current_buf = action_buffers[i]
+            self.assertEqual(bytes(current_buf[:len(action)]), action,
+                             "step {} action mismatch".format(i))
+
+        # Total call counts
+        self.assertEqual(raw.PyRecvBegin.call_count, 3)
+        self.assertEqual(raw.PyRecvEnd.call_count, 3)
+        self.assertEqual(raw.PySendBegin.call_count, 3)
+        self.assertEqual(raw.PySendEnd.call_count, 3)
+
+    @mock.patch("ns3ai_utils.kill_proc_tree")
+    def test_gym_reset_experiment_restarts_after_kill(self, mock_kill):
+        """验证 Experiment kill → re-run 的 reset 周期使 session 恢复 Ready"""
+        raw = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw)
+        exp = Experiment("target", ".", msg_module)
+
+        with mock.patch("ns3ai_utils.run_single_ns3",
+                        return_value=("cmd", FakeProcess())):
+            interface = exp.run()
+
+        self.assertEqual(interface.session_state, SessionState.Ready)
+        self.assertTrue(exp.isalive())
+
+        # Kill the subprocess (Gym reset step 1)
+        exp.kill()
+        mock_kill.assert_called_once()
+        self.assertIsNone(exp.proc)
+        mock_kill.reset_mock()
+
+        # Re-run (Gym reset step 2)
+        with mock.patch("ns3ai_utils.run_single_ns3",
+                        return_value=("cmd", FakeProcess())):
+            interface2 = exp.run()
+
+        self.assertEqual(interface2.session_state, SessionState.Ready)
+        self.assertTrue(exp.isalive())
+
+    @mock.patch("ns3ai_utils.kill_proc_tree")
+    def test_gym_reset_cycle_preserves_communication(self, mock_kill):
+        """验证 reset (kill → re-run) 后 wrapper 收发操作仍正常工作"""
+        raw = FakeMessageInterface()
+        msg_module = FakeMsgModule(raw)
+        exp = Experiment("target", ".", msg_module)
+
+        with mock.patch("ns3ai_utils.run_single_ns3",
+                        return_value=("cmd", FakeProcess())):
+            interface = exp.run()
+
+        # Step cycle before reset — should not raise
+        interface.PyRecvBegin()
+        interface.PyRecvEnd()
+        interface.PySendBegin()
+        interface.PySendEnd()
+
+        # Reset (Gym reset lifecycle)
+        exp.kill()
+        mock_kill.assert_called_once()
+        mock_kill.reset_mock()
+
+        with mock.patch("ns3ai_utils.run_single_ns3",
+                        return_value=("cmd", FakeProcess())):
+            interface2 = exp.run()
+
+        # Step cycle after reset — should also not raise
+        interface2.PyRecvBegin()
+        interface2.PyRecvEnd()
+        interface2.PySendBegin()
+        interface2.PySendEnd()
 
 
 if __name__ == "__main__":
