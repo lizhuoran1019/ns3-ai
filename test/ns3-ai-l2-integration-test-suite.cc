@@ -14,8 +14,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <sstream>
 #include <string>
@@ -85,7 +87,13 @@ bool
 WaitChild(pid_t pid, int expectedCode = 0)
 {
     int status;
-    waitpid(pid, &status, 0);
+    const pid_t ret = waitpid(pid, &status, 0);
+    if (ret == -1)
+    {
+        std::cerr << "L2 test: waitpid(" << pid << ") failed: "
+                  << std::strerror(errno) << std::endl;
+        return false;
+    }
     if (!WIFEXITED(status))
     {
         std::cerr << "L2 test: child pid=" << pid << " terminated by signal "
@@ -103,15 +111,58 @@ WaitChild(pid_t pid, int expectedCode = 0)
     return true;
 }
 
+/**
+ * \brief RAII guard：父进程析构时确保子进程被 kill + wait，避免僵尸。
+ *
+ * 当父进程因断言提前返回时，子进程可能变成孤儿/僵尸。
+ * 此 guard 在析构时 SIGTERM + waitpid（WNOHANG）清理子进程。
+ */
+class ChildGuard
+{
+  public:
+    explicit ChildGuard(pid_t pid)
+        : m_pid(pid)
+    {
+    }
+
+    ~ChildGuard()
+    {
+        if (m_pid > 0)
+        {
+            kill(m_pid, SIGTERM);
+            int status;
+            waitpid(m_pid, &status, WNOHANG);
+        }
+    }
+
+    ChildGuard(const ChildGuard&) = delete;
+    ChildGuard& operator=(const ChildGuard&) = delete;
+
+    pid_t GetPid() const
+    {
+        return m_pid;
+    }
+
+    void Release()
+    {
+        m_pid = -1;
+    }
+
+  private:
+    pid_t m_pid;
+};
+
+
 // ---------- 会话状态等待 ----------
 
 /**
- * \brief 等待会话脱离 Init（即至少达到 Ready / Running），或检测到 Error 后立即返回失败。
+ * \brief 等待会话达到 Ready 或 Running（即可以正常交换数据的状态）。
  *
- * 子进程可能在父进程第一次轮询前就从 Init→Ready→Running 跃迁，
- * 因此不能只等待精确的 Ready。此函数等待 Init 被离开，同时将 Error 视为失败。
+ * 显式枚举成功状态：只接受 Ready / Running。
+ * Error、Closed、Closing 均视为异常并立即返回 false，
+ * 避免将异常路径误判为活跃。
  *
- * \return 会话离开 Init 返回 true；进入 Error 或超时返回 false。
+ * \return 达到 Ready 或 Running 返回 true；进入异常状态或超时返回 false。
  */
 bool
 WaitForSessionActive(Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg>& iface,
@@ -121,12 +172,13 @@ WaitForSessionActive(Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg>& iface,
     while (true)
     {
         const auto state = iface.GetSessionState();
-        if (state != Ns3AiMsgSessionState::Init)
+        if (state == Ns3AiMsgSessionState::Ready ||
+            state == Ns3AiMsgSessionState::Running)
         {
-            // Ready / Running / Closing / Closed 均视为活跃
             return true;
         }
-        if (state == Ns3AiMsgSessionState::Error)
+        // Error / Closed / Closing 均视为失败
+        if (state != Ns3AiMsgSessionState::Init)
         {
             return false;
         }
@@ -268,6 +320,7 @@ class IpcRecvTimeoutAfterOpenerExitTestCase : public TestCase
             0, 0);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -300,6 +353,7 @@ class IpcRecvTimeoutAfterOpenerExitTestCase : public TestCase
                               Ns3AiMsgErrorReason::Timeout,
                               "Error reason is Timeout when no data arrives");
 
+        guard.Release();
         NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
     }
 };
@@ -338,6 +392,7 @@ class RunningStateReachableTestCase : public TestCase
             0, 0);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -394,6 +449,7 @@ class RunningStateReachableTestCase : public TestCase
                               Ns3AiMsgSessionState::Running,
                               "Session remains Running after full data exchange");
 
+        guard.Release();
         NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit with code 0");
     }
 };
@@ -431,6 +487,7 @@ class CloseHandshakeCppToPyTestCase : public TestCase
             0, 0);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -451,9 +508,10 @@ class CloseHandshakeCppToPyTestCase : public TestCase
             {
                 _exit(2);
             }
-            NS_TEST_EXPECT_MSG_EQ(opener.GetCloseReason(),
-                                  Ns3AiMsgCloseReason::Normal,
-                                  "Opener sees Normal close reason");
+            if (opener.GetCloseReason() != Ns3AiMsgCloseReason::Normal)
+            {
+                _exit(3); // 意外 close reason
+            }
             opener.AcknowledgeClose(Ns3AiMsgPeer::Py);
             _exit(0);
         }
@@ -466,6 +524,7 @@ class CloseHandshakeCppToPyTestCase : public TestCase
 
         creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
 
+        guard.Release();
         NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0), true, "Child must ack close and exit cleanly");
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
@@ -510,6 +569,7 @@ class CloseHandshakePyToCppTestCase : public TestCase
             0, 0);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -535,12 +595,8 @@ class CloseHandshakePyToCppTestCase : public TestCase
             _exit(0);
         }
 
-        const bool active =
-            WaitForSessionActive(creator, POLL_TIMEOUT_US);
-        NS_TEST_ASSERT_MSG_EQ(active,
-                              true,
-                              "Session must leave Init before proceeding");
-
+        // 子进程打开后立即 RequestClose，session 直接从 Init→Ready→Closing，
+        // 因此不能等 Ready/Running——直接等 Closing。
         const bool closing =
             WaitForExactStateOrError(creator, Ns3AiMsgSessionState::Closing, POLL_TIMEOUT_US);
         NS_TEST_ASSERT_MSG_EQ(closing,
@@ -552,6 +608,7 @@ class CloseHandshakePyToCppTestCase : public TestCase
                               "Creator observes UserInterrupted close reason");
         creator.AcknowledgeClose(Ns3AiMsgPeer::Cpp);
 
+        guard.Release();
         NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly after close");
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
@@ -592,6 +649,7 @@ class SchemaStrictMatchTestCase : public TestCase
             Ns3AiSchemaValidationMode::Strict);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -614,6 +672,7 @@ class SchemaStrictMatchTestCase : public TestCase
                               true,
                               "Matching metadata allows opener to join");
 
+        guard.Release();
         NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
     }
 };
@@ -652,6 +711,7 @@ class SchemaStrictMismatchTestCase : public TestCase
             Ns3AiSchemaValidationMode::Strict);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -676,6 +736,7 @@ class SchemaStrictMismatchTestCase : public TestCase
             _exit(caughtSchemaError ? 0 : 1);
         }
 
+        guard.Release();
         NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0),
                               true,
                               "Child must catch Ns3AiSchemaError (exit code 0)");
@@ -717,6 +778,7 @@ class PeerEarlyExitBaselineTestCase : public TestCase
         RemoveSegment(names);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -732,6 +794,7 @@ class PeerEarlyExitBaselineTestCase : public TestCase
             _exit(0);
         }
 
+        guard.Release();
         NS_TEST_ASSERT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
 
         // Parent: 尝试作为 opener 打开 → 段存在但找不到对象
@@ -801,6 +864,7 @@ class HeartbeatSilentPeerDeathTestCase : public TestCase
             HB_PERIOD_US, HB_TIMEOUT_US);
 
         const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
 
         if (pid == 0)
         {
@@ -846,9 +910,115 @@ class HeartbeatSilentPeerDeathTestCase : public TestCase
                               Ns3AiMsgErrorReason::PeerDeath,
                               "Error reason is PeerDeath when heartbeat publisher stops");
 
+        guard.Release();
         NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
     }
 };
+
+/**
+ * \brief Heartbeat normal maintenance：双方带 heartbeat 正常数据交换，验证无 PeerDeath 误报。
+ *
+ * 子进程作为 opener 以 50ms 间隔发布 heartbeat，同时完成数据往返。
+ * 父进程作为 creator 在 WaitForSync 中观察 Python heartbeat 持续活跃，
+ * 即使子进程退出后有心跳超时检测的 delay，正常会话期间不应出现 PeerDeath。
+ */
+class HeartbeatNormalMaintenanceTestCase : public TestCase
+{
+  public:
+    HeartbeatNormalMaintenanceTestCase()
+        : TestCase("L2 heartbeat normal maintenance: no false PeerDeath during active exchange")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint64_t SYNC_TIMEOUT_US = 2000000; // 2s
+        constexpr uint64_t HB_PERIOD_US = 100000;     // 100ms
+        constexpr uint64_t HB_TIMEOUT_US = 300000;    // 300ms
+        constexpr uint64_t POLL_TIMEOUT_US = 5000000;
+
+        const auto names = MakeTestNames(MakeUniqueSuffix("l2-hb-normal"));
+        RemoveSegment(names);
+
+        Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
+            true, false, true, 4096,
+            names.m_segmentName.c_str(),
+            names.m_cpp2pyMsgName.c_str(),
+            names.m_py2cppMsgName.c_str(),
+            names.m_lockableName.c_str(),
+            SYNC_TIMEOUT_US,
+            names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+            HB_PERIOD_US, HB_TIMEOUT_US);
+
+        const pid_t pid = ForkChild();
+        ChildGuard guard(pid);
+
+        if (pid == 0)
+        {
+            Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> opener(
+                false, false, true, 4096,
+                names.m_segmentName.c_str(),
+                names.m_cpp2pyMsgName.c_str(),
+                names.m_py2cppMsgName.c_str(),
+                names.m_lockableName.c_str(),
+                SYNC_TIMEOUT_US,
+                names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
+                HB_PERIOD_US, HB_TIMEOUT_US);
+
+            // 接收数据（WaitForSync 会自动发布 Python heartbeat）
+            const bool recvOk = opener.TryPyRecvBegin();
+            if (!recvOk)
+            {
+                _exit(2);
+            }
+            const uint32_t received = opener.GetCpp2PyStruct()->value;
+            opener.PyRecvEnd();
+
+            // 发送回复
+            opener.PySendBegin();
+            opener.GetPy2CppStruct()->value = received + 1;
+            opener.PySendEnd();
+
+            _exit(0);
+        }
+
+        const bool active =
+            WaitForSessionActive(creator, POLL_TIMEOUT_US);
+        NS_TEST_ASSERT_MSG_EQ(active,
+                              true,
+                              "Session must become active before data exchange");
+
+        // 发送数据（WaitForSync 会自动发布 C++ heartbeat）
+        constexpr uint32_t SENT_VALUE = 42;
+        creator.CppSendBegin();
+        creator.GetCpp2PyStruct()->value = SENT_VALUE;
+        creator.CppSendEnd();
+
+        // 接收回复
+        const bool recvOk = creator.TryCppRecvBegin();
+        NS_TEST_EXPECT_MSG_EQ(recvOk, true, "CppRecvBegin must succeed");
+        if (recvOk)
+        {
+            NS_TEST_EXPECT_MSG_EQ(creator.GetPy2CppStruct()->value,
+                                  SENT_VALUE + 1,
+                                  "Child echoed back value+1");
+            creator.CppRecvEnd();
+        }
+
+        // 验证在完整的数据交换过程中没有触发 PeerDeath
+        NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
+                              Ns3AiMsgSessionState::Running,
+                              "Session remains Running after exchange with heartbeat active");
+        NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
+                              Ns3AiMsgErrorReason::None,
+                              "No error reason (no false PeerDeath during active exchange)");
+
+        guard.Release();
+        NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");
+    }
+};
+
 
 // ================================================================
 // TestSuite 注册
@@ -869,6 +1039,7 @@ class L2IntegrationTestSuite : public TestSuite
         AddTestCase(new SchemaStrictMismatchTestCase, TestCase::QUICK);
         AddTestCase(new PeerEarlyExitBaselineTestCase, TestCase::QUICK);
         AddTestCase(new HeartbeatSilentPeerDeathTestCase, TestCase::QUICK);
+        AddTestCase(new HeartbeatNormalMaintenanceTestCase, TestCase::QUICK);
     }
 };
 
