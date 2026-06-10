@@ -196,7 +196,14 @@ m.attr("schema_version") = ENV_STRUCT_SCHEMA_VERSION;
 
 ### ABI 版本说明
 
-`NS3_AI_MSG_ABI_VERSION`（当前值：1）仅在共享内存协议头（`Ns3AiMsgProtocolHeader`）或同步区域（`Ns3AiMsgSync`）的二进制布局变化时才需要修改。这是极低频操作，通常只发生在 ns3-ai 核心开发中。
+`NS3_AI_MSG_ABI_VERSION`（当前值：2）仅在共享内存协议头（`Ns3AiMsgProtocolHeader`）或同步区域（`Ns3AiMsgSync`）的二进制布局变化时才需要修改。这是极低频操作，通常只发生在 ns3-ai 核心开发中。
+
+#### ABI 版本变更记录
+
+| 版本 | 变更内容 | 触发 PR / ADR |
+|---|---|---|
+| 1 | 初始版本 | — |
+| 2 | `Ns3AiMsgSync` 末尾新增 `m_cppHeartbeatCounter` / `m_pyHeartbeatCounter`（`atomic<uint64_t>` × 2），`sizeof` 14→32，`alignof` 1→8 | ADR 0005, #48 |
 
 ### ABI 变更门禁
 

@@ -155,3 +155,17 @@ _Avoid_: 协议兼容性、版本兼容性检查
 **ABI 变更门禁（ABI Change Gate）**：
 保护共享内存二进制布局的编译期和运行时双层防御。编译期通过 `sizeof`/`alignof` 静态断言锁定 `Ns3AiMsgSync` 和 `Ns3AiMsgProtocolHeader` 的布局；运行时通过 `NS3_AI_MSG_ABI_VERSION` 跨进程校验防止旧 ABI 打开新 ABI 的段。布局变更时必须同时更新版本号和静态断言值。
 _Avoid_: 仅依赖版本号、仅依赖大小检查
+
+### 心跳
+
+**双向心跳（Bidirectional Heartbeat）**：
+共享内存会话中每端独立发布自己的存活信号、独立检测对端存活信号是否停滞的心跳协议。不是 request/response ping，不需要 ACK。
+_Avoid_: 主从心跳、ping-pong 式成对心跳
+
+**心跳间隔（Heartbeat Interval）**：
+两端周期性更新自己心跳字段的时间间隔。C++ 端和 Python 端可配置为不同值，不要求对称。
+_Avoid_: 统一的全局心跳周期
+
+**心跳超时（Heartbeat Timeout）**：
+从最后一次观察到对端心跳推进开始，经过此时间后判定对端死亡。应当是心跳间隔的倍数（默认 3×），而非绝对固定窗口。心跳超时触发后直接进入 Error 结论，不设置额外 grace period。
+_Avoid_: 单次心跳丢失即判决死亡、grace period 缓冲
