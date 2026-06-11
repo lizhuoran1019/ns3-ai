@@ -84,7 +84,7 @@ jobs:
               rm -rf "src/$module"
             fi
           done
-          rm -rf examples scratch doc bindings
+          rm -rf doc bindings
 
       # ── 系统依赖 ──
       - name: Install system dependencies
