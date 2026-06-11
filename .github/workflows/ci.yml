@@ -6,8 +6,12 @@
 #
 # ns3-ai CI — 基于 ns-3.41 的自动化验证流程
 #
-# 每次 push/PR 到 ns3-ai 仓库时，自动验证：
+# 每次 PR 到 main 时自动验证：
 #   能配置、能编译、能 import、能测试、能跑最小多智体 Gym 示例
+#
+# 缓存策略：
+#   - ns-3.41 源码：永久缓存，仅首次下载
+#   - ccache：按 ns3-ai 源码 hash 缓存编译产物
 
 name: ns3-ai CI
 
@@ -29,7 +33,37 @@ jobs:
           path: ns3-ai-source
           fetch-depth: 1
 
-      - name: Checkout ns-3.41
+      # ── ccache 恢复（在 mv 之前，确保 hashFiles 可用） ──
+      - name: Install ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache
+
+      - name: Setup ccache
+        run: |
+          ccache --set-config=cache_dir="$GITHUB_WORKSPACE/.ccache"
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+          ccache -z
+
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-ns3ai-${{ hashFiles('ns3-ai-source/**/*.cc', 'ns3-ai-source/**/*.h', 'ns3-ai-source/**/*.proto', 'ns3-ai-source/**/CMakeLists.txt') }}
+          restore-keys: ccache-ns3ai-
+
+      # ── ns-3.41 源码缓存 ──
+      - name: Cache ns-3.41 source
+        id: cache-ns3
+        uses: actions/cache@v4
+        with:
+          path: ns-3
+          key: ns3-source-3.41-v1
+
+      - name: Checkout ns-3.41 (cache miss only)
+        if: steps.cache-ns3.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: nsnam/ns-3-dev-git
@@ -38,18 +72,19 @@ jobs:
           fetch-depth: 1
 
       - name: Place ns3-ai in contrib/ai
-        run: mv ns3-ai-source ns-3/contrib/ai
+        run: rm -rf ns-3/contrib/ai && mv ns3-ai-source ns-3/contrib/ai
 
+      # ── 系统依赖 ──
       - name: Install system dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git gcc g++ cmake python3 python3-pip python3-dev make ninja-build \
+            gcc g++ cmake python3 python3-pip python3-dev make ninja-build \
             libgsl-dev libxml2-dev \
             libboost-program-options-dev \
             protobuf-compiler libprotobuf-dev \
             pybind11-dev
 
+      # ── 预生成 protobuf 绑定 ──
       - name: Generate protobuf Python bindings for mock tests
         working-directory: ns-3
         run: |
@@ -57,6 +92,7 @@ jobs:
             -I contrib/ai/model/gym-interface \
             contrib/ai/model/gym-interface/messages.proto
 
+      # ── Python mock 测试 ──
       - name: Install ns3ai_utils and run Python mock tests
         working-directory: ns-3
         run: |
@@ -64,17 +100,21 @@ jobs:
           python3 -m pip install -e contrib/ai/python_utils
           python3 -m unittest discover -s contrib/ai/python_utils/tests -v
 
-      - name: Configure ns-3
+      # ── 构建 ──
+      - name: Configure ns-3 (with ccache)
         working-directory: ns-3
         run: |
           ./ns3 configure --enable-examples --enable-tests -- \
             -DPython_EXECUTABLE="$(which python3)" \
-            -DPython3_EXECUTABLE="$(which python3)"
+            -DPython3_EXECUTABLE="$(which python3)" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
-      - name: Build ai module + test-runner
+      - name: Build test-runner (with ccache)
         working-directory: ns-3
         run: ./ns3 build test-runner
 
+      # ── Gym Python 包 ──
       - name: Install Gym Python package from build tree
         working-directory: ns-3
         run: python3 -m pip install -e cmake-cache/contrib/ai/python
@@ -83,10 +123,12 @@ jobs:
         working-directory: ns-3
         run: python3 -c "import ns3ai_utils; import ns3ai_gym_env; from ns3ai_gym_env import ns3ai_gym_msg_py; print('msg_buffer_size =', ns3ai_gym_msg_py.msg_buffer_size); print('All imports OK')"
 
+      # ── C++ 测试 ──
       - name: Run ai C++ tests
         working-directory: ns-3
         run: ./test.py -s ai --no-build -v
 
+      # ── 多智体 Gym smoke test ──
       - name: Build multi-agent Gym example
         working-directory: ns-3
         run: ./ns3 build ns3ai_apb_multi_agent_gym
@@ -95,3 +137,8 @@ jobs:
         working-directory: ns-3
         timeout-minutes: 2
         run: python3 contrib/ai/examples/a-plus-b/use-multi-agent-gym/apb.py
+
+      # ── ccache 报告 ──
+      - name: Print ccache statistics
+        if: always()
+        run: ccache -s
