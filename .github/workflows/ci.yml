@@ -49,7 +49,7 @@ jobs:
       - name: Install ns3ai_utils and run Python mock tests
         working-directory: ns-3
         run: |
-          python3 -m pip install psutil gymnasium
+          python3 -m pip install psutil gymnasium protobuf
           python3 -m pip install -e contrib/ai/python_utils
           python3 -m unittest discover -s contrib/ai/python_utils/tests -v
 
