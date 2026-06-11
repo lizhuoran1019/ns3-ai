@@ -611,6 +611,7 @@ void
 OpenGymInterface::ResetNamedInterfaces()
 {
     NS_LOG_FUNCTION_NOARGS();
+    DoGetNamedInterfaces()->clear();
 }
 
 } // namespace ns3

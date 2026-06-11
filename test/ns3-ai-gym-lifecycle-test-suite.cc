@@ -84,6 +84,29 @@ class ResetNamedInterfacesDoesNotAffectSingletonTestCase : public TestCase
 };
 
 /**
+ * \brief ResetNamedInterfaces() 清除 named registry，同 prefix 后续 Get() 返回新实例。
+ */
+class ResetNamedInterfacesClearsRegistryTestCase : public TestCase
+{
+  public:
+    ResetNamedInterfacesClearsRegistryTestCase()
+        : TestCase("ResetNamedInterfaces() clears named registry so Get(prefix) returns a fresh instance")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<OpenGymInterface> first = OpenGymInterface::Get("test-reset-named");
+        OpenGymInterface::ResetNamedInterfaces();
+        Ptr<OpenGymInterface> second = OpenGymInterface::Get("test-reset-named");
+        NS_TEST_EXPECT_MSG_NE(first,
+                              second,
+                              "ResetNamedInterfaces() should clear named registry so Get(prefix) returns a fresh instance");
+    }
+};
+
+/**
  * \brief 显式 CreateObject<OpenGymInterface> 不受 Reset() 影响。
  */
 class ExplicitCreateObjectUnaffectedByResetTestCase : public TestCase
@@ -180,6 +203,7 @@ class Ns3AiGymLifecycleTestSuite : public TestSuite
         AddTestCase(new ResetClearsSingletonTestCase, TestCase::QUICK);
         AddTestCase(new ResetClearsNamedRegistryTestCase, TestCase::QUICK);
         AddTestCase(new ResetNamedInterfacesDoesNotAffectSingletonTestCase, TestCase::QUICK);
+        AddTestCase(new ResetNamedInterfacesClearsRegistryTestCase, TestCase::QUICK);
         AddTestCase(new ExplicitCreateObjectUnaffectedByResetTestCase, TestCase::QUICK);
         AddTestCase(new MultiCycleResetTestCase, TestCase::QUICK);
         AddTestCase(new DifferentPrefixesDoNotPolluteTestCase, TestCase::QUICK);
