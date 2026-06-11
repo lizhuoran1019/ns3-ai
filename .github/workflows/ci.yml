@@ -15,7 +15,9 @@
 
 name: ns3-ai CI
 
-on: [push]
+on:
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   verify:
