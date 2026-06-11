@@ -46,6 +46,13 @@ jobs:
             protobuf-compiler libprotobuf-dev \
             pybind11-dev
 
+      - name: Generate protobuf Python bindings for mock tests
+        working-directory: ns-3
+        run: |
+          protoc --python_out=contrib/ai/model/gym-interface/py/ns3ai_gym_env \
+            -I contrib/ai/model/gym-interface \
+            contrib/ai/model/gym-interface/messages.proto
+
       - name: Install ns3ai_utils and run Python mock tests
         working-directory: ns-3
         run: |
