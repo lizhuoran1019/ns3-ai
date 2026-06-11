@@ -16,8 +16,6 @@
 name: ns3-ai CI
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
 
