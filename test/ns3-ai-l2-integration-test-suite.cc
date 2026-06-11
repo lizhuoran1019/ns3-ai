@@ -16,6 +16,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -115,7 +116,7 @@ WaitChild(pid_t pid, int expectedCode = 0)
  * \brief RAII guard：父进程析构时确保子进程被 kill + wait，避免僵尸。
  *
  * 当父进程因断言提前返回时，子进程可能变成孤儿/僵尸。
- * 此 guard 在析构时 SIGTERM + waitpid（WNOHANG）清理子进程。
+ * 策略：SIGTERM → 2 秒内轮询 waitpid(WNOHANG) → 未退出则 SIGKILL → blocking waitpid。
  */
 class ChildGuard
 {
@@ -127,12 +128,39 @@ class ChildGuard
 
     ~ChildGuard()
     {
-        if (m_pid > 0)
+        if (m_pid <= 0)
         {
-            kill(m_pid, SIGTERM);
-            int status;
-            waitpid(m_pid, &status, WNOHANG);
+            return;
         }
+        // 先 SIGTERM 请求正常退出
+        kill(m_pid, SIGTERM);
+        // 轮询等待子进程退出，最多 2 秒
+        constexpr int MAX_RETRIES = 200;
+        int status;
+        for (int i = 0; i < MAX_RETRIES; i++)
+        {
+            pid_t ret;
+            do
+            {
+                ret = waitpid(m_pid, &status, WNOHANG);
+            } while (ret == -1 && errno == EINTR);
+            if (ret == m_pid)
+            {
+                return; // 已退出
+            }
+            if (ret == -1)
+            {
+                return; // waitpid 异常
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        // 超时仍未退出 → 强制 SIGKILL
+        kill(m_pid, SIGKILL);
+        pid_t ret;
+        do
+        {
+            ret = waitpid(m_pid, &status, 0);
+        } while (ret == -1 && errno == EINTR);
     }
 
     ChildGuard(const ChildGuard&) = delete;
@@ -916,17 +944,19 @@ class HeartbeatSilentPeerDeathTestCase : public TestCase
 };
 
 /**
- * \brief Heartbeat normal maintenance：双方带 heartbeat 正常数据交换，验证无 PeerDeath 误报。
+ * \brief Heartbeat normal maintenance：长时间正常会话窗口内验证无 PeerDeath 误报。
  *
- * 子进程作为 opener 以 50ms 间隔发布 heartbeat，同时完成数据往返。
- * 父进程作为 creator 在 WaitForSync 中观察 Python heartbeat 持续活跃，
- * 即使子进程退出后有心跳超时检测的 delay，正常会话期间不应出现 PeerDeath。
+ * 子进程先以 50ms 间隔显式 HeartbeatPublish() 持续 800ms（远超 2×HB_TIMEOUT_US=600ms），
+ * 然后进入 TryPyRecvBegin 接收数据并回复。
+ * 父进程在子进程 heartbeat 活跃期间进入 TryCppRecvBegin → WaitForSync，
+ * 持续观察 Python heartbeat 保持活跃 → 不应触发 PeerDeath。
+ * 数据交换完成后验证 ErrorReason == None。
  */
 class HeartbeatNormalMaintenanceTestCase : public TestCase
 {
   public:
     HeartbeatNormalMaintenanceTestCase()
-        : TestCase("L2 heartbeat normal maintenance: no false PeerDeath during active exchange")
+        : TestCase("L2 heartbeat normal maintenance: >2×HB_TIMEOUT window without false PeerDeath")
     {
     }
 
@@ -938,7 +968,7 @@ class HeartbeatNormalMaintenanceTestCase : public TestCase
         constexpr uint64_t HB_TIMEOUT_US = 300000;    // 300ms
         constexpr uint64_t POLL_TIMEOUT_US = 5000000;
 
-        const auto names = MakeTestNames(MakeUniqueSuffix("l2-hb-normal"));
+        const auto names = MakeTestNames(MakeUniqueSuffix("l2-hb-maintenance"));
         RemoveSegment(names);
 
         Ns3AiMsgInterfaceImpl<L2CppMsg, L2PyMsg> creator(
@@ -966,7 +996,14 @@ class HeartbeatNormalMaintenanceTestCase : public TestCase
                 names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
                 HB_PERIOD_US, HB_TIMEOUT_US);
 
-            // 接收数据（WaitForSync 会自动发布 Python heartbeat）
+            // 发布 heartbeat 800ms（> 2×HB_TIMEOUT_US），模拟正常长期活跃
+            for (int i = 0; i < 16; i++)
+            {
+                opener.HeartbeatPublish();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+
+            // 接收父进程发送的数据
             const bool recvOk = opener.TryPyRecvBegin();
             if (!recvOk)
             {
@@ -989,15 +1026,17 @@ class HeartbeatNormalMaintenanceTestCase : public TestCase
                               true,
                               "Session must become active before data exchange");
 
-        // 发送数据（WaitForSync 会自动发布 C++ heartbeat）
+        // 先发送数据给子进程
         constexpr uint32_t SENT_VALUE = 42;
         creator.CppSendBegin();
         creator.GetCpp2PyStruct()->value = SENT_VALUE;
         creator.CppSendEnd();
 
-        // 接收回复
+        // 进入 WaitForSync 接收回复
+        // 此时子进程仍在 heartbeat 循环（800ms 还未结束），Python heartbeat 持续活跃
+        // WaitForSync 中的 CheckPeerHeartbeat 应反复观察到增量的 m_pyHeartbeatCounter
         const bool recvOk = creator.TryCppRecvBegin();
-        NS_TEST_EXPECT_MSG_EQ(recvOk, true, "CppRecvBegin must succeed");
+        NS_TEST_EXPECT_MSG_EQ(recvOk, true, "CppRecvBegin must succeed after child sends response");
         if (recvOk)
         {
             NS_TEST_EXPECT_MSG_EQ(creator.GetPy2CppStruct()->value,
@@ -1006,13 +1045,13 @@ class HeartbeatNormalMaintenanceTestCase : public TestCase
             creator.CppRecvEnd();
         }
 
-        // 验证在完整的数据交换过程中没有触发 PeerDeath
+        // 验证整个正常维护窗口内没有触发 PeerDeath
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
                               Ns3AiMsgSessionState::Running,
-                              "Session remains Running after exchange with heartbeat active");
+                              "Session remains Running after sustained heartbeat window");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
                               Ns3AiMsgErrorReason::None,
-                              "No error reason (no false PeerDeath during active exchange)");
+                              "No error reason (no false PeerDeath during >2×HB_TIMEOUT window)");
 
         guard.Release();
         NS_TEST_EXPECT_MSG_EQ(WaitChild(pid, 0), true, "Child must exit cleanly");

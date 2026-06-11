@@ -158,12 +158,17 @@ if(NS3AI_ENABLE_PYTHON_BINDINGS)
     message(STATUS "ns3-ai Gym Python package build directory: ${NS3AI_PYTHON_BUILD_ROOT}")
 endif()
 
+# L2 集成测试使用 fork() / waitpid() / kill() / POSIX shared-memory，仅限 Unix
+if(UNIX)
+    set(NS3AI_L2_TEST_SOURCE test/ns3-ai-l2-integration-test-suite.cc)
+endif()
+
 build_lib(
         LIBNAME ai
         SOURCE_FILES ${msg_interface_srcs} ${gym_interface_srcs}
         HEADER_FILES ${msg_interface_hdrs} ${gym_interface_hdrs}
         LIBRARIES_TO_LINK ${libcore} protobuf::libprotobuf
-        TEST_SOURCES test/ns3-ai-error-test-suite.cc test/msg-interface-session-lifecycle-test-suite.cc test/ns3-ai-semaphore-test-suite.cc test/ns3-ai-schema-validation-test-suite.cc test/ns3-ai-l2-integration-test-suite.cc
+        TEST_SOURCES test/ns3-ai-error-test-suite.cc test/msg-interface-session-lifecycle-test-suite.cc test/ns3-ai-semaphore-test-suite.cc test/ns3-ai-schema-validation-test-suite.cc ${NS3AI_L2_TEST_SOURCE}
 )
 add_dependencies(${libai} proto-objects)
 
