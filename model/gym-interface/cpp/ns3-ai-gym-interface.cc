@@ -599,4 +599,18 @@ OpenGymInterface::DoGetNamedInterfaces()
     return &interfaces;
 }
 
+void
+OpenGymInterface::Reset()
+{
+    NS_LOG_FUNCTION_NOARGS();
+    *DoGet() = CreateObject<OpenGymInterface>();
+    DoGetNamedInterfaces()->clear();
+}
+
+void
+OpenGymInterface::ResetNamedInterfaces()
+{
+    NS_LOG_FUNCTION_NOARGS();
+}
+
 } // namespace ns3
