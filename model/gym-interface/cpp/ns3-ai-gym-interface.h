@@ -49,6 +49,28 @@ class OpenGymInterface : public Object
     static Ptr<OpenGymInterface> Get(uint32_t envId);
     static Ptr<OpenGymInterface> Get(const std::string& sharedMemoryPrefix);
 
+    /**
+     * \brief Clear the static singleton and named-interface registry.
+     *
+     * After calling Reset(), subsequent Get() and Get(prefix) calls create
+     * fresh OpenGymInterface instances. Explicitly-owned Ptr<OpenGymInterface>
+     * obtained before Reset() remain valid.
+     *
+     * Get() and Get(prefix) are legacy compatibility shims backed by
+     * process-wide static storage. New code should prefer explicit
+     * injection via OpenGymEnv::SetOpenGymInterface(Ptr<OpenGymInterface>).
+     */
+    static void Reset();
+
+    /**
+     * \brief Clear only the named-interface registry.
+     *
+     * The no-argument singleton Get() is unaffected.  After calling
+     * ResetNamedInterfaces(), a subsequent Get(prefix) with the same
+     * prefix creates a fresh interface.
+     */
+    static void ResetNamedInterfaces();
+
     OpenGymInterface();
     explicit OpenGymInterface(const std::string& sharedMemoryPrefix);
     ~OpenGymInterface() override;
