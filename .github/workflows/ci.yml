@@ -71,9 +71,9 @@ jobs:
             -DPython_EXECUTABLE="$(which python3)" \
             -DPython3_EXECUTABLE="$(which python3)"
 
-      - name: Build ns-3 (with ai module and test runner)
+      - name: Build ai module + test-runner
         working-directory: ns-3
-        run: ./ns3 build
+        run: ./ns3 build test-runner
 
       - name: Install Gym Python package from build tree
         working-directory: ns-3
