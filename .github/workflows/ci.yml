@@ -15,15 +15,7 @@
 
 name: ns3-ai CI
 
-on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+on: [push]
 
 jobs:
   verify:
