@@ -140,7 +140,7 @@ jobs:
       # ── C++ 测试 ──
       - name: Run ai C++ tests
         working-directory: ns-3
-        run: ./test.py -s ai --no-build -v
+        run: ./test.py -s "ns3-ai-*" --no-build -v
 
       # ── 多智体 Gym smoke test ──
       - name: Build multi-agent Gym example
