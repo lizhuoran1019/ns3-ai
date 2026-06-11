@@ -74,6 +74,18 @@ jobs:
       - name: Place ns3-ai in contrib/ai
         run: rm -rf ns-3/contrib/ai && mv ns3-ai-source ns-3/contrib/ai
 
+      # ── 精简 ns-3 源码：只保留 ai 所需的 core 模块 ──
+      - name: Strip ns-3 source (keep only core + contrib/ai)
+        working-directory: ns-3
+        run: |
+          for dir in src/*/; do
+            module=$(basename "$dir")
+            if [ "$module" != "core" ]; then
+              rm -rf "src/$module"
+            fi
+          done
+          rm -rf examples scratch doc bindings
+
       # ── 系统依赖 ──
       - name: Install system dependencies
         run: |
@@ -104,7 +116,9 @@ jobs:
       - name: Configure ns-3 (with ccache)
         working-directory: ns-3
         run: |
-          ./ns3 configure --enable-examples --enable-tests -- \
+          ./ns3 configure \
+            --enable-modules=core,ai \
+            --enable-examples --enable-tests -- \
             -DPython_EXECUTABLE="$(which python3)" \
             -DPython3_EXECUTABLE="$(which python3)" \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
