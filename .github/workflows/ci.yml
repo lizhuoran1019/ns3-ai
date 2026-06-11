@@ -1,0 +1,86 @@
+# Copyright (c) 2026
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# ns3-ai CI — 基于 ns-3.41 的自动化验证流程
+#
+# 每次 push/PR 到 ns3-ai 仓库时，自动验证：
+#   能配置、能编译、能 import、能测试、能跑最小多智体 Gym 示例
+
+name: ns3-ai CI
+
+on: [push, pull_request]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout ns3-ai
+        uses: actions/checkout@v4
+        with:
+          path: ns3-ai-source
+          fetch-depth: 1
+
+      - name: Checkout ns-3.41
+        uses: actions/checkout@v4
+        with:
+          repository: nsnam/ns-3-dev-git
+          ref: ns-3.41
+          path: ns-3
+          fetch-depth: 1
+
+      - name: Place ns3-ai in contrib/ai
+        run: mv ns3-ai-source ns-3/contrib/ai
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git gcc g++ cmake python3 python3-pip python3-dev make ninja-build \
+            libgsl-dev libxml2-dev \
+            libboost-program-options-dev \
+            protobuf-compiler libprotobuf-dev \
+            pybind11-dev
+
+      - name: Install ns3ai_utils and run Python mock tests
+        working-directory: ns-3
+        run: |
+          python3 -m pip install psutil
+          python3 -m pip install -e contrib/ai/python_utils
+          python3 -m unittest discover -s contrib/ai/python_utils/tests -v
+
+      - name: Configure ns-3
+        working-directory: ns-3
+        run: |
+          ./ns3 configure --enable-examples --enable-tests -- \
+            -DPython_EXECUTABLE="$(which python3)" \
+            -DPython3_EXECUTABLE="$(which python3)"
+
+      - name: Build ai module
+        working-directory: ns-3
+        run: ./ns3 build ai
+
+      - name: Install Gym Python package from build tree
+        working-directory: ns-3
+        run: python3 -m pip install -e cmake-cache/contrib/ai/python
+
+      - name: Verify Python imports
+        working-directory: ns-3
+        run: python3 -c "import ns3ai_utils; import ns3ai_gym_env; from ns3ai_gym_env import ns3ai_gym_msg_py; print('msg_buffer_size =', ns3ai_gym_msg_py.msg_buffer_size); print('All imports OK')"
+
+      - name: Run ai C++ tests
+        working-directory: ns-3
+        run: ./test.py -s ai -v
+
+      - name: Build multi-agent Gym example
+        working-directory: ns-3
+        run: ./ns3 build ns3ai_apb_multi_agent_gym
+
+      - name: Run multi-agent Gym smoke test
+        working-directory: ns-3
+        timeout-minutes: 2
+        run: python3 contrib/ai/examples/a-plus-b/use-multi-agent-gym/apb.py
