@@ -104,6 +104,9 @@ set(msg_interface_srcs )
 # module header from this list, and including pybind11 there forces every C++ executable to link
 # against libpython even when it does not use Python bindings.
 set(msg_interface_hdrs model/msg-interface/ns3-ai-errors.h model/msg-interface/ns3-ai-msg-interface.h model/msg-interface/ns3-ai-semaphore.h)
+
+set(transport_srcs model/transport/ns3-ai-queue-transport.cc)
+set(transport_hdrs model/transport/ns3-ai-transport.h model/transport/ns3-ai-queue-transport.h)
 set(gym_interface_srcs
         model/gym-interface/cpp/ns3-ai-gym-interface.cc
         model/gym-interface/cpp/ns3-ai-gym-env.cc
@@ -165,8 +168,8 @@ endif()
 
 build_lib(
         LIBNAME ai
-        SOURCE_FILES ${msg_interface_srcs} ${gym_interface_srcs}
-        HEADER_FILES ${msg_interface_hdrs} ${gym_interface_hdrs}
+        SOURCE_FILES ${msg_interface_srcs} ${gym_interface_srcs} ${transport_srcs}
+        HEADER_FILES ${msg_interface_hdrs} ${gym_interface_hdrs} ${transport_hdrs}
         LIBRARIES_TO_LINK ${libcore} protobuf::libprotobuf
         TEST_SOURCES test/ns3-ai-error-test-suite.cc test/msg-interface-session-lifecycle-test-suite.cc test/ns3-ai-semaphore-test-suite.cc test/ns3-ai-schema-validation-test-suite.cc test/ns3-ai-gym-lifecycle-test-suite.cc ${NS3AI_L2_TEST_SOURCE}
 )

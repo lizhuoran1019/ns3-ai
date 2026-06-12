@@ -34,10 +34,10 @@ struct SessionLifecyclePyMsg
     uint32_t value;
 };
 
-Ns3AiMsgInterfaceNames
+MailboxTransportNames
 MakeTestNames(const std::string& suffix)
 {
-    return Ns3AiMsgInterface::MakeNames("ns3-ai-session-lifecycle-test-" + suffix);
+    return MailboxTransport::MakeNames("ns3-ai-session-lifecycle-test-" + suffix);
 }
 
 std::string
@@ -49,7 +49,7 @@ MakeUniqueSuffix(const char* name)
 }
 
 void
-RemoveSegment(const Ns3AiMsgInterfaceNames& names)
+RemoveSegment(const MailboxTransportNames& names)
 {
     boost::interprocess::shared_memory_object::remove(names.m_segmentName.c_str());
 }
@@ -68,7 +68,7 @@ class SessionReadyHandshakeTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("ready"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -81,10 +81,10 @@ class SessionReadyHandshakeTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Init,
+                              TransportSessionState::Init,
                               "A single created peer has not completed the session handshake");
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -97,10 +97,10 @@ class SessionReadyHandshakeTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Ready,
+                              TransportSessionState::Ready,
                               "Creator observes READY after the second peer joins");
         NS_TEST_EXPECT_MSG_EQ(opener.GetSessionState(),
-                              Ns3AiMsgSessionState::Ready,
+                              TransportSessionState::Ready,
                               "Opener observes READY after joining the session");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionId(),
                               opener.GetSessionId(),
@@ -127,7 +127,7 @@ class SessionCloseHandshakeTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("close"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -138,7 +138,7 @@ class SessionCloseHandshakeTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -153,7 +153,7 @@ class SessionCloseHandshakeTestCase : public TestCase
         // 通过一次数据交换将会话状态推进到 RUNNING
         creator.CppSendBegin();
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Running,
+                              TransportSessionState::Running,
                               "First data exchange moves the session to RUNNING");
         creator.CppSendEnd();
 
@@ -161,25 +161,25 @@ class SessionCloseHandshakeTestCase : public TestCase
         opener.PyRecvEnd();
 
         // 从 RUNNING 状态发起关闭
-        creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
+        creator.RequestClose(TransportPeer::Cpp, TransportCloseReason::Normal);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Closing,
+                              TransportSessionState::Closing,
                               "Close request moves the session to CLOSING");
         NS_TEST_EXPECT_MSG_EQ(opener.GetCloseReason(),
-                              Ns3AiMsgCloseReason::Normal,
+                              TransportCloseReason::Normal,
                               "Close reason is visible before acknowledgement");
 
-        opener.AcknowledgeClose(Ns3AiMsgPeer::Py);
+        opener.AcknowledgeClose(TransportPeer::Py);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Closed,
+                              TransportSessionState::Closed,
                               "Creator observes CLOSED after peer acknowledgement");
         NS_TEST_EXPECT_MSG_EQ(opener.GetSessionState(),
-                              Ns3AiMsgSessionState::Closed,
+                              TransportSessionState::Closed,
                               "Acknowledging peer observes CLOSED");
         NS_TEST_EXPECT_MSG_EQ(creator.GetCloseReason(),
-                              Ns3AiMsgCloseReason::Normal,
+                              TransportCloseReason::Normal,
                               "Closed session keeps the structured close reason");
     }
 };
@@ -198,7 +198,7 @@ class SessionTimeoutErrorTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("timeout"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -209,7 +209,7 @@ class SessionTimeoutErrorTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -225,13 +225,13 @@ class SessionTimeoutErrorTestCase : public TestCase
                               false,
                               "Receiving without matching Python send times out");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Timeout moves the session to ERROR");
         NS_TEST_EXPECT_MSG_EQ(opener.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Peer observes timeout as structured error reason");
         NS_TEST_EXPECT_MSG_EQ(opener.GetLastErrorPeer(),
-                              Ns3AiMsgPeer::Cpp,
+                              TransportPeer::Cpp,
                               "Peer observes which side reported the timeout");
     }
 };
@@ -250,7 +250,7 @@ class SessionClosingBlocksDataExchangeTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("closing-blocks-data"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -261,7 +261,7 @@ class SessionClosingBlocksDataExchangeTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -273,7 +273,7 @@ class SessionClosingBlocksDataExchangeTestCase : public TestCase
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
-        creator.RequestClose(Ns3AiMsgPeer::Cpp, Ns3AiMsgCloseReason::Normal);
+        creator.RequestClose(TransportPeer::Cpp, TransportCloseReason::Normal);
 
         NS_TEST_EXPECT_MSG_EQ(creator.TryCppSendBegin(),
                               false,
@@ -302,10 +302,10 @@ class SessionClosingBlocksDataExchangeTestCase : public TestCase
                               true,
                               "Blocking send is rejected immediately while the session is closing");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Closing,
+                              TransportSessionState::Closing,
                               "Rejected data exchange does not overwrite the close state");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::None,
+                              TransportErrorReason::None,
                               "Rejecting data exchange during close is not a peer error");
     }
 };
@@ -324,7 +324,7 @@ class SessionPeerDeathErrorTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("peer-death"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -335,7 +335,7 @@ class SessionPeerDeathErrorTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -347,16 +347,16 @@ class SessionPeerDeathErrorTestCase : public TestCase
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
-        opener.ReportPeerDeath(Ns3AiMsgPeer::Cpp);
+        opener.ReportPeerDeath(TransportPeer::Cpp);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Peer death moves the session to ERROR");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::PeerDeath,
+                              TransportErrorReason::PeerDeath,
                               "Peer death is distinguishable from timeout");
         NS_TEST_EXPECT_MSG_EQ(creator.GetLastErrorPeer(),
-                              Ns3AiMsgPeer::Cpp,
+                              TransportPeer::Cpp,
                               "The dead peer is recorded");
     }
 };
@@ -375,7 +375,7 @@ class SessionStaleGenerationErrorTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("stale-generation"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -386,7 +386,7 @@ class SessionStaleGenerationErrorTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -400,17 +400,17 @@ class SessionStaleGenerationErrorTestCase : public TestCase
 
         const auto staleGeneration = opener.GetGenerationId() + 1;
 
-        NS_TEST_EXPECT_MSG_EQ(opener.CheckGenerationId(staleGeneration, Ns3AiMsgPeer::Py),
+        NS_TEST_EXPECT_MSG_EQ(opener.CheckGenerationId(staleGeneration, TransportPeer::Py),
                               false,
                               "Generation mismatch is rejected");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Stale generation moves the session to ERROR");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::StaleGeneration,
+                              TransportErrorReason::StaleGeneration,
                               "Stale generation has a distinct error reason");
         NS_TEST_EXPECT_MSG_EQ(creator.GetLastErrorPeer(),
-                              Ns3AiMsgPeer::Py,
+                              TransportPeer::Py,
                               "The peer with the stale generation is recorded");
     }
 };
@@ -429,7 +429,7 @@ class SessionProtocolMismatchErrorTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("protocol-mismatch"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -449,7 +449,7 @@ class SessionProtocolMismatchErrorTestCase : public TestCase
         bool rejected = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+            MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
                 false,
                 false,
                 true,
@@ -473,13 +473,13 @@ class SessionProtocolMismatchErrorTestCase : public TestCase
 
         NS_TEST_EXPECT_MSG_EQ(rejected, true, "Mismatched protocol header is rejected");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Protocol mismatch moves the session to ERROR");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::ProtocolMismatch,
+                              TransportErrorReason::ProtocolMismatch,
                               "Protocol mismatch has a distinct error reason");
         NS_TEST_EXPECT_MSG_EQ(creator.GetLastErrorPeer(),
-                              Ns3AiMsgPeer::Py,
+                              TransportPeer::Py,
                               "The opening peer is recorded as the protocol mismatch reporter");
     }
 };
@@ -498,7 +498,7 @@ class SessionUserInterruptedCloseIdempotentTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("user-interrupted"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true,
             false,
             true,
@@ -509,7 +509,7 @@ class SessionUserInterruptedCloseIdempotentTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false,
             false,
             true,
@@ -521,19 +521,19 @@ class SessionUserInterruptedCloseIdempotentTestCase : public TestCase
             1000,
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
 
-        opener.RequestClose(Ns3AiMsgPeer::Py, Ns3AiMsgCloseReason::UserInterrupted);
-        creator.AcknowledgeClose(Ns3AiMsgPeer::Cpp);
-        opener.RequestClose(Ns3AiMsgPeer::Py, Ns3AiMsgCloseReason::UserInterrupted);
-        creator.AcknowledgeClose(Ns3AiMsgPeer::Cpp);
+        opener.RequestClose(TransportPeer::Py, TransportCloseReason::UserInterrupted);
+        creator.AcknowledgeClose(TransportPeer::Cpp);
+        opener.RequestClose(TransportPeer::Py, TransportCloseReason::UserInterrupted);
+        creator.AcknowledgeClose(TransportPeer::Cpp);
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Closed,
+                              TransportSessionState::Closed,
                               "Repeated close operations keep the session CLOSED");
         NS_TEST_EXPECT_MSG_EQ(creator.GetCloseReason(),
-                              Ns3AiMsgCloseReason::UserInterrupted,
+                              TransportCloseReason::UserInterrupted,
                               "User interruption is distinguishable from normal close");
         NS_TEST_EXPECT_MSG_EQ(opener.GetErrorReason(),
-                              Ns3AiMsgErrorReason::None,
+                              TransportErrorReason::None,
                               "Completed user interruption close is not an error");
     }
 };
@@ -559,12 +559,12 @@ class SessionTryBeginAbortNotTimeoutTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("try-abort"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
             1000000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -583,15 +583,15 @@ class SessionTryBeginAbortNotTimeoutTestCase : public TestCase
 
         // 不应标记为 Timeout
         NS_TEST_EXPECT_MSG_NE(opener.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Aborted by finish must not be recorded as Timeout");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::None,
+                              TransportErrorReason::None,
                               "Finishing peer has no error");
 
         // 验证 opener 没有进入 Error 状态
         NS_TEST_EXPECT_MSG_NE(opener.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Opener session is not Error after finish abort");
     }
 };
@@ -613,12 +613,12 @@ class SessionTimeoutDiagnosticTextTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("timeout-diag"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
             1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -659,7 +659,7 @@ class SessionTimeoutDiagnosticTextTestCase : public TestCase
         NS_TEST_EXPECT_MSG_EQ(caughtTimeout, true,
                               "CppRecvBegin throws on timeout");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Timeout is recorded as Timeout error");
     }
 };
@@ -686,12 +686,12 @@ class SessionTryCppSendBeginTimeoutTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("send-timeout-try"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
             1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -707,13 +707,13 @@ class SessionTryCppSendBeginTimeoutTestCase : public TestCase
                               "TryCppSendBegin returns false when cpp2py slot is full");
 
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Send timeout moves the session to ERROR");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Send timeout is recorded as Timeout");
         NS_TEST_EXPECT_MSG_EQ(creator.GetLastErrorPeer(),
-                              Ns3AiMsgPeer::Cpp,
+                              TransportPeer::Cpp,
                               "The sending peer is recorded as the timeout reporter");
     }
 };
@@ -737,12 +737,12 @@ class SessionCppSendBeginTimeoutDiagnosticTextTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("send-timeout-diag"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
             1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -786,7 +786,7 @@ class SessionCppSendBeginTimeoutDiagnosticTextTestCase : public TestCase
         NS_TEST_EXPECT_MSG_EQ(caughtTimeout, true,
                               "CppSendBegin throws on timeout");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Timeout is recorded as Timeout error");
     }
 };
@@ -811,12 +811,12 @@ class SessionPyGetFinishedForwardTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("py-get-finished"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
             1000, names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility);
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -831,10 +831,10 @@ class SessionPyGetFinishedForwardTestCase : public TestCase
                               Ns3AiMsgPeerState::Finished,
                               "Python peer state is Finished after PyGetFinished");
         NS_TEST_EXPECT_MSG_NE(opener.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Session is not Error after finish polling");
         NS_TEST_EXPECT_MSG_EQ(opener.GetErrorReason(),
-                              Ns3AiMsgErrorReason::None,
+                              TransportErrorReason::None,
                               "Finish polling does not record an error");
 
         // 重复调用幂等
@@ -866,7 +866,7 @@ class SessionHeartbeatNormalLivenessTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("hb-liveness"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -874,7 +874,7 @@ class SessionHeartbeatNormalLivenessTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             100000,           // heartbeat_period_us = 100ms (min allowed)
             300000);          // heartbeat_timeout_us = 300ms (min: max(3×100ms, 300ms))
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -902,10 +902,10 @@ class SessionHeartbeatNormalLivenessTestCase : public TestCase
         NS_TEST_EXPECT_MSG_EQ(result, false,
                               "TryCppRecvBegin returns false on sync timeout with heartbeat liveness");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Sync timeout moves session to Error despite heartbeat liveness");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Error reason is Timeout (not PeerDeath) when heartbeat is alive");
     }
 };
@@ -930,7 +930,7 @@ class SessionHeartbeatPeerDeathDetectionTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("hb-peerdeath"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -938,7 +938,7 @@ class SessionHeartbeatPeerDeathDetectionTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             100000,           // heartbeat_period_us = 100ms (min allowed)
             300000);          // heartbeat_timeout_us = 300ms
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -953,10 +953,10 @@ class SessionHeartbeatPeerDeathDetectionTestCase : public TestCase
         NS_TEST_EXPECT_MSG_EQ(result, false,
                               "TryCppRecvBegin returns false on PeerDeath detection");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "PeerDeath moves session to Error");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::PeerDeath,
+                              TransportErrorReason::PeerDeath,
                               "Error reason is PeerDeath when peer heartbeat stalls");
     }
 };
@@ -981,7 +981,7 @@ class SessionHeartbeatDisableByZeroTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("hb-disabled"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -989,7 +989,7 @@ class SessionHeartbeatDisableByZeroTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             0,                // heartbeat_period_us = 0 (disabled)
             0);               // heartbeat_timeout_us = 0 (disabled)
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -1003,10 +1003,10 @@ class SessionHeartbeatDisableByZeroTestCase : public TestCase
         NS_TEST_EXPECT_MSG_EQ(result, false,
                               "TryCppRecvBegin returns false on timeout with heartbeat disabled");
         NS_TEST_EXPECT_MSG_EQ(creator.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Timeout moves session to Error (heartbeat disabled)");
         NS_TEST_EXPECT_MSG_EQ(creator.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Error reason is Timeout when heartbeat is disabled");
     }
 };
@@ -1032,7 +1032,7 @@ class SessionHeartbeatPythonWaitNoFalsePeerDeathTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("hb-py-no-false"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -1040,7 +1040,7 @@ class SessionHeartbeatPythonWaitNoFalsePeerDeathTestCase : public TestCase
             names.m_headerName.c_str(), 0, 0, 0, 0, Ns3AiSchemaValidationMode::Compatibility,
             100000,           // heartbeat_period_us = 100ms
             300000);          // heartbeat_timeout_us = 300ms
-        Ns3AiMsgInterfaceImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
+        MailboxTransportImpl<SessionLifecycleCppMsg, SessionLifecyclePyMsg> opener(
             false, false, true, 4096,
             names.m_segmentName.c_str(), names.m_cpp2pyMsgName.c_str(),
             names.m_py2cppMsgName.c_str(), names.m_lockableName.c_str(),
@@ -1056,10 +1056,10 @@ class SessionHeartbeatPythonWaitNoFalsePeerDeathTestCase : public TestCase
         NS_TEST_EXPECT_MSG_EQ(result, false,
                               "TryPyRecvBegin returns false on sync timeout (not PeerDeath)");
         NS_TEST_EXPECT_MSG_EQ(opener.GetSessionState(),
-                              Ns3AiMsgSessionState::Error,
+                              TransportSessionState::Error,
                               "Sync timeout moves session to Error");
         NS_TEST_EXPECT_MSG_EQ(opener.GetErrorReason(),
-                              Ns3AiMsgErrorReason::Timeout,
+                              TransportErrorReason::Timeout,
                               "Error reason is Timeout (not PeerDeath) for Python wait path");
     }
 };

@@ -32,10 +32,10 @@ struct SchemaTestPyMsg
     uint32_t value;
 };
 
-Ns3AiMsgInterfaceNames
+MailboxTransportNames
 MakeTestNames(const std::string& suffix)
 {
-    return Ns3AiMsgInterface::MakeNames("ns3-ai-schema-validation-test-" + suffix);
+    return MailboxTransport::MakeNames("ns3-ai-schema-validation-test-" + suffix);
 }
 
 std::string
@@ -47,7 +47,7 @@ MakeUniqueSuffix(const char* name)
 }
 
 void
-RemoveSegment(const Ns3AiMsgInterfaceNames& names)
+RemoveSegment(const MailboxTransportNames& names)
 {
     boost::interprocess::shared_memory_object::remove(names.m_segmentName.c_str());
 }
@@ -73,7 +73,7 @@ class StrictModeCreatorZeroHashRejectedTestCase : public TestCase
         bool caught = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
                 true,
                 false,
                 true,
@@ -118,7 +118,7 @@ class StrictModeHashMismatchErrorDiagnosticTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("hash-mismatch-diag"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -142,7 +142,7 @@ class StrictModeHashMismatchErrorDiagnosticTestCase : public TestCase
         bool hasSegment = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -205,7 +205,7 @@ class StrictModeVersionMismatchRejectedTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("strict-version-mismatch"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -223,7 +223,7 @@ class StrictModeVersionMismatchRejectedTestCase : public TestCase
         bool caughtCpp2Py = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -263,7 +263,7 @@ class CompatibilityModeMissingMetadataAllowsOpenTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("compat-missing"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -277,7 +277,7 @@ class CompatibilityModeMissingMetadataAllowsOpenTestCase : public TestCase
         bool openerOk = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -319,7 +319,7 @@ class CompatibilityModePeerMissingMetadataTestCase : public TestCase
         RemoveSegment(names);
 
         // creator has metadata=0
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -334,7 +334,7 @@ class CompatibilityModePeerMissingMetadataTestCase : public TestCase
         bool openerOk = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -370,7 +370,7 @@ class CompatibilityModeMismatchStillFailsTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("compat-mismatch"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -384,7 +384,7 @@ class CompatibilityModeMismatchStillFailsTestCase : public TestCase
         bool caughtSchemaError = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -422,7 +422,7 @@ class DisabledModeMismatchAllowsOpenTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("disabled-mismatch"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -436,7 +436,7 @@ class DisabledModeMismatchAllowsOpenTestCase : public TestCase
         bool openerOk = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -475,7 +475,7 @@ class StrictModePeerActualMissingMetadataTestCase : public TestCase
         RemoveSegment(names);
 
         // creator 用 Compatibility 发布，使 header 中 hash=0
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -490,7 +490,7 @@ class StrictModePeerActualMissingMetadataTestCase : public TestCase
         bool caughtMissingActual = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
+            MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> opener(
                 false, false, true, 4096,
                 names.m_segmentName.c_str(),
                 names.m_cpp2pyMsgName.c_str(),
@@ -537,7 +537,7 @@ class CompatibilityWarningVisibleOnStderrTestCase : public TestCase
         std::ostringstream captured;
         auto oldBuf = std::cerr.rdbuf(captured.rdbuf());
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),
@@ -579,7 +579,7 @@ class DisabledModeWarningVisibleOnStderrTestCase : public TestCase
         std::ostringstream captured;
         auto oldBuf = std::cerr.rdbuf(captured.rdbuf());
 
-        Ns3AiMsgInterfaceImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
+        MailboxTransportImpl<SchemaTestCppMsg, SchemaTestPyMsg> creator(
             true, false, true, 4096,
             names.m_segmentName.c_str(),
             names.m_cpp2pyMsgName.c_str(),

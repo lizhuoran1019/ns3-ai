@@ -34,11 +34,11 @@ using namespace ns3;
 int
 main()
 {
-    auto interface = Ns3AiMsgInterface::Get();
+    auto interface = MailboxTransport::Get();
     interface->SetIsMemoryCreator(false);
     interface->SetUseVector(false);
     interface->SetHandleFinish(true);
-    Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>* msgInterface =
+    MailboxTransportImpl<EnvStruct, ActStruct>* msgInterface =
         interface->GetInterface<EnvStruct, ActStruct>();
 
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();

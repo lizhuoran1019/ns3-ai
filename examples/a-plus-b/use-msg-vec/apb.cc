@@ -33,11 +33,11 @@ using namespace ns3;
 int
 main()
 {
-    auto interface = Ns3AiMsgInterface::Get();
+    auto interface = MailboxTransport::Get();
     interface->SetIsMemoryCreator(false);
     interface->SetUseVector(true);
     interface->SetHandleFinish(true);
-    Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>* msgInterface =
+    MailboxTransportImpl<EnvStruct, ActStruct>* msgInterface =
         interface->GetInterface<EnvStruct, ActStruct>();
 
     // Should run after Python

@@ -28,8 +28,8 @@
 
 namespace py = pybind11;
 
-PYBIND11_MAKE_OPAQUE(ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector);
-PYBIND11_MAKE_OPAQUE(ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector);
+PYBIND11_MAKE_OPAQUE(ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector);
+PYBIND11_MAKE_OPAQUE(ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector);
 
 PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 {
@@ -46,16 +46,16 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
 
     py::class_<ActStruct>(m, "PyActStruct", py::module_local()).def(py::init<>()).def_readwrite("c", &ActStruct::act_c);
 
-    py::class_<ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector>(m, "PyEnvVector")
+    py::class_<ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector>(m, "PyEnvVector")
         .def(
             "resize",
-            static_cast<void (ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::*)(
-                ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::size_type)>(
-                &ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::resize))
-        .def("__len__", &ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::size)
+            static_cast<void (ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::*)(
+                ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::size_type)>(
+                &ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::resize))
+        .def("__len__", &ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector::size)
         .def(
             "__getitem__",
-            [](ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector& vec,
+            [](ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Cpp2PyMsgVector& vec,
                uint32_t i) -> EnvStruct& {
                 if (i >= vec.size())
                 {
@@ -67,16 +67,16 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
             },
             py::return_value_policy::reference);
 
-    py::class_<ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector>(m, "PyActVector")
+    py::class_<ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector>(m, "PyActVector")
         .def(
             "resize",
-            static_cast<void (ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector::*)(
-                ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector::size_type)>(
-                &ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector::resize))
-        .def("__len__", &ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector::size)
+            static_cast<void (ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector::*)(
+                ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector::size_type)>(
+                &ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector::resize))
+        .def("__len__", &ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector::size)
         .def(
             "__getitem__",
-            [](ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>::Py2CppMsgVector& vec,
+            [](ns3::MailboxTransportImpl<EnvStruct, ActStruct>::Py2CppMsgVector& vec,
                uint32_t i) -> ActStruct& {
                 if (i >= vec.size())
                 {
@@ -88,7 +88,7 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
             },
             py::return_value_policy::reference);
 
-    using MsgInterface = ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>;
+    using MsgInterface = ns3::MailboxTransportImpl<EnvStruct, ActStruct>;
 
     py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl", py::module_local())
         .def(py::init<bool,
@@ -140,17 +140,17 @@ PYBIND11_MODULE(ns3ai_apb_py_vec, m)
              })
         .def("RequestClose",
              [](const MsgInterface& interface, uint8_t peer, uint8_t reason) {
-                 interface.RequestClose(static_cast<ns3::Ns3AiMsgPeer>(peer),
-                                        static_cast<ns3::Ns3AiMsgCloseReason>(reason));
+                 interface.RequestClose(static_cast<ns3::TransportPeer>(peer),
+                                        static_cast<ns3::TransportCloseReason>(reason));
              })
         .def("AcknowledgeClose",
              [](const MsgInterface& interface, uint8_t peer) {
-                 interface.AcknowledgeClose(static_cast<ns3::Ns3AiMsgPeer>(peer));
+                 interface.AcknowledgeClose(static_cast<ns3::TransportPeer>(peer));
              })
         .def("CheckGenerationId",
              [](const MsgInterface& interface, uint64_t generationId, uint8_t peer) {
                  return interface.CheckGenerationId(generationId,
-                                                    static_cast<ns3::Ns3AiMsgPeer>(peer));
+                                                    static_cast<ns3::TransportPeer>(peer));
              })
         .def("PyRecvBegin", &MsgInterface::PyRecvBegin)
         .def("PyRecvEnd", &MsgInterface::PyRecvEnd)
