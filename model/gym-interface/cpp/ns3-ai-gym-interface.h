@@ -94,6 +94,9 @@ class OpenGymInterface : public Object
     Ptr<OpenGymSpace> GetObservationSpace();
     Ptr<OpenGymDataContainer> GetObservation();
     float GetReward();
+    bool IsTruncated();
+    int32_t GetErrorCode();
+    std::string GetErrorMessage();
     bool IsGameOver();
     std::string GetExtraInfo();
     bool ExecuteActions(Ptr<OpenGymDataContainer> action);
@@ -102,6 +105,9 @@ class OpenGymInterface : public Object
     void SetGetObservationSpaceCb(Callback<Ptr<OpenGymSpace>> cb);
     void SetGetObservationCb(Callback<Ptr<OpenGymDataContainer>> cb);
     void SetGetRewardCb(Callback<float> cb);
+    void SetGetTruncatedCb(Callback<bool> cb);
+    void SetGetErrorCodeCb(Callback<int32_t> cb);
+    void SetGetErrorMessageCb(Callback<std::string> cb);
     void SetGetGameOverCb(Callback<bool> cb);
     void SetGetExtraInfoCb(Callback<std::string> cb);
     void SetExecuteActionsCb(Callback<bool, Ptr<OpenGymDataContainer>> cb);
@@ -136,6 +142,9 @@ class OpenGymInterface : public Object
     Callback<bool> m_gameOverCb;
     Callback<Ptr<OpenGymDataContainer>> m_obsCb;
     Callback<float> m_rewardCb;
+    Callback<bool> m_truncatedCb;
+    Callback<int32_t> m_errorCodeCb;
+    Callback<std::string> m_errorMessageCb;
     Callback<std::string> m_extraInfoCb;
     Callback<bool, Ptr<OpenGymDataContainer>> m_actionCb;
 };

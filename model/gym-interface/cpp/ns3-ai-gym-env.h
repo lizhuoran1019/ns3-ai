@@ -71,6 +71,23 @@ class OpenGymEnv : public Object
     virtual float GetReward() = 0;
 
     /**
+     * Get whether the current episode ended by truncation.
+     */
+    virtual bool GetTruncated();
+
+    /**
+     * Get environment-side error code for the current state.
+     */
+    virtual int32_t GetErrorCode();
+
+    /**
+     * Get environment-side error message for the current state.
+     * A non-empty message is treated as an environment error signal.
+     * Do not use this channel for warnings or informational text.
+     */
+    virtual std::string GetErrorMessage();
+
+    /**
      * Get extra information
      */
     virtual std::string GetExtraInfo() = 0;

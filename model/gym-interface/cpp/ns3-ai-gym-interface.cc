@@ -328,8 +328,11 @@ OpenGymInterface::SendCurrentState()
 
     Ptr<OpenGymDataContainer> obsDataContainer = GetObservation();
     float reward = GetReward();
-    bool isGameOver = IsGameOver();
+    bool terminated = IsGameOver();
+    bool truncated = IsTruncated();
     std::string extraInfo = GetExtraInfo();
+    int32_t errorCode = GetErrorCode();
+    std::string errorMessage = GetErrorMessage();
     ns3_ai_gym::EnvStateMsg envStateMsg;
     m_pendingStateSequence = NextSequence();
     envStateMsg.set_sequence(m_pendingStateSequence);
@@ -340,19 +343,31 @@ OpenGymInterface::SendCurrentState()
         obsDataContainerPbMsg = obsDataContainer->GetDataContainerPbMsg();
         envStateMsg.mutable_obsdata()->CopyFrom(obsDataContainerPbMsg);
     }
+    const bool hasEnvironmentError = (errorCode != 0) || !errorMessage.empty();
+    const bool simulationEndOnly = m_simEnd && !hasEnvironmentError && !terminated && !truncated;
+    const bool finalTruncated = truncated || simulationEndOnly;
+
     envStateMsg.set_reward(reward);
-    envStateMsg.set_isgameover(false);
-    if (isGameOver)
+    envStateMsg.set_terminated(terminated);
+    envStateMsg.set_truncated(finalTruncated);
+    envStateMsg.set_isgameover(terminated || finalTruncated || hasEnvironmentError);
+    envStateMsg.set_errorcode(errorCode);
+    envStateMsg.set_errormessage(errorMessage);
+    if (hasEnvironmentError)
     {
-        envStateMsg.set_isgameover(true);
-        if (m_simEnd)
-        {
-            envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::SimulationEnd);
-        }
-        else
-        {
-            envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::GameOver);
-        }
+        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::EnvironmentError);
+    }
+    else if (terminated)
+    {
+        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::GameOver);
+    }
+    else if (truncated)
+    {
+        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::EpisodeTruncated);
+    }
+    else if (simulationEndOnly)
+    {
+        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::SimulationEnd);
     }
     envStateMsg.set_info(extraInfo);
 
@@ -473,6 +488,42 @@ OpenGymInterface::GetReward()
 }
 
 bool
+OpenGymInterface::IsTruncated()
+{
+    NS_LOG_FUNCTION(this);
+    bool truncated = false;
+    if (!m_truncatedCb.IsNull())
+    {
+        truncated = m_truncatedCb();
+    }
+    return truncated;
+}
+
+int32_t
+OpenGymInterface::GetErrorCode()
+{
+    NS_LOG_FUNCTION(this);
+    int32_t errorCode = 0;
+    if (!m_errorCodeCb.IsNull())
+    {
+        errorCode = m_errorCodeCb();
+    }
+    return errorCode;
+}
+
+std::string
+OpenGymInterface::GetErrorMessage()
+{
+    NS_LOG_FUNCTION(this);
+    std::string errorMessage;
+    if (!m_errorMessageCb.IsNull())
+    {
+        errorMessage = m_errorMessageCb();
+    }
+    return errorMessage;
+}
+
+bool
 OpenGymInterface::IsGameOver()
 {
     NS_LOG_FUNCTION(this);
@@ -481,7 +532,7 @@ OpenGymInterface::IsGameOver()
     {
         gameOver = m_gameOverCb();
     }
-    return (gameOver || m_simEnd);
+    return gameOver;
 }
 
 std::string
@@ -536,6 +587,24 @@ void
 OpenGymInterface::SetGetRewardCb(Callback<float> cb)
 {
     m_rewardCb = cb;
+}
+
+void
+OpenGymInterface::SetGetTruncatedCb(Callback<bool> cb)
+{
+    m_truncatedCb = cb;
+}
+
+void
+OpenGymInterface::SetGetErrorCodeCb(Callback<int32_t> cb)
+{
+    m_errorCodeCb = cb;
+}
+
+void
+OpenGymInterface::SetGetErrorMessageCb(Callback<std::string> cb)
+{
+    m_errorMessageCb = cb;
 }
 
 void

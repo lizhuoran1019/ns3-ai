@@ -114,10 +114,16 @@ message EnvStateMsg {
 	enum Reason {
 		SimulationEnd = 0;
 		GameOver = 1;
+		EpisodeTruncated = 2;
+		EnvironmentError = 3;
 	}
 	Reason reason = 4;
 	string info = 5;
 	uint64 sequence = 6;
+	bool terminated = 7;
+	bool truncated = 8;
+	int32 errorCode = 9;
+	string errorMessage = 10;
 }
 
 message EnvActMsg {

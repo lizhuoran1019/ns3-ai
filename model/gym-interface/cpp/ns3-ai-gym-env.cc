@@ -49,6 +49,24 @@ OpenGymEnv::GetTypeId()
     return tid;
 }
 
+bool
+OpenGymEnv::GetTruncated()
+{
+    return false;
+}
+
+int32_t
+OpenGymEnv::GetErrorCode()
+{
+    return 0;
+}
+
+std::string
+OpenGymEnv::GetErrorMessage()
+{
+    return "";
+}
+
 void
 OpenGymEnv::SetOpenGymInterface(Ptr<OpenGymInterface> openGymInterface)
 {
@@ -60,6 +78,9 @@ OpenGymEnv::SetOpenGymInterface(Ptr<OpenGymInterface> openGymInterface)
     openGymInterface->SetGetGameOverCb(MakeCallback(&OpenGymEnv::GetGameOver, this));
     openGymInterface->SetGetObservationCb(MakeCallback(&OpenGymEnv::GetObservation, this));
     openGymInterface->SetGetRewardCb(MakeCallback(&OpenGymEnv::GetReward, this));
+    openGymInterface->SetGetTruncatedCb(MakeCallback(&OpenGymEnv::GetTruncated, this));
+    openGymInterface->SetGetErrorCodeCb(MakeCallback(&OpenGymEnv::GetErrorCode, this));
+    openGymInterface->SetGetErrorMessageCb(MakeCallback(&OpenGymEnv::GetErrorMessage, this));
     openGymInterface->SetGetExtraInfoCb(MakeCallback(&OpenGymEnv::GetExtraInfo, this));
     openGymInterface->SetExecuteActionsCb(MakeCallback(&OpenGymEnv::ExecuteActions, this));
 }

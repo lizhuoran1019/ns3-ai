@@ -43,8 +43,10 @@ def run():
                 actions.append([action])
                 print(f"agent={agent_id};obs={int(a)},{int(b)};act={action};")
 
-            _, _, terminated, _, _ = env.step(tuple(actions))
-            finished = [finished[i] or bool(terminated[i]) for i in range(NUM_AGENTS)]
+            _, _, terminated, truncated, _ = env.step(tuple(actions))
+            finished = [
+                finished[i] or bool(terminated[i]) or bool(truncated[i]) for i in range(NUM_AGENTS)
+            ]
     finally:
         env.close()
 
