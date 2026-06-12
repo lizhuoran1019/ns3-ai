@@ -320,6 +320,35 @@ class Ns3EnvMockTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "reset\\(\\) must be called before step\\(\\)"):
             env.step(0)
 
+    def test_step_with_non_empty_error_message_raises_runtime_error(self):
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
+        state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)
+        state_seq1 = _make_env_state_msg(obs_value=1,
+                                         reward=0.0,
+                                         is_game_over=False,
+                                         sequence=1,
+                                         terminated=False,
+                                         truncated=False,
+                                         reason=pb.EnvStateMsg.GameOver,
+                                         error_code=0,
+                                         error_message="malformed state")
+        fake = FakeGymInterface([sim_init, state_seq0, state_seq1])
+
+        env = Ns3Env("target", ".", autoStart=False)
+        env.msgInterface = fake
+        env.initialize_env()
+        env.rx_env_state()
+
+        with self.assertRaisesRegex(RuntimeError, "malformed state"):
+            env.step(0)
+
+        close = pb.EnvActMsg()
+        close.ParseFromString(fake.writes[2])
+        self.assertTrue(close.stopSimReq)
+
+        with self.assertRaisesRegex(RuntimeError, "reset\\(\\) must be called before step\\(\\)"):
+            env.step(0)
+
     def test_step_with_simulation_end_preserves_reason(self):
         sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
         state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)

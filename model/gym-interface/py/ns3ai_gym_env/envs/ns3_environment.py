@@ -28,7 +28,7 @@ class Ns3Env(gym.Env):
             )
 
     def _raise_env_error_if_present(self):
-        if self.gameOverReason != pb.EnvStateMsg.EnvironmentError and self.errorCode == 0:
+        if not self._has_environment_error():
             return
 
         message = self.errorMessage or "ns3-ai Gym environment reported an unspecified error"
@@ -37,6 +37,13 @@ class Ns3Env(gym.Env):
                 "ns3-ai Gym environment error {}: {}".format(self.errorCode, message)
             )
         raise RuntimeError("ns3-ai Gym environment error: {}".format(message))
+
+    def _has_environment_error(self):
+        return (
+            self.gameOverReason == pb.EnvStateMsg.EnvironmentError
+            or self.errorCode != 0
+            or bool(self.errorMessage)
+        )
 
     def _ensure_step_allowed(self):
         if self.gameOver:
@@ -220,8 +227,7 @@ class Ns3Env(gym.Env):
         self.gameOver = (
             self.terminated
             or self.truncated
-            or self.gameOverReason == pb.EnvStateMsg.EnvironmentError
-            or self.errorCode != 0
+            or self._has_environment_error()
         )
 
         if self.gameOver:
@@ -247,14 +253,10 @@ class Ns3Env(gym.Env):
         return self.extraInfo
 
     def get_reason(self):
-        if self.errorCode != 0 or self.gameOverReason == pb.EnvStateMsg.EnvironmentError:
+        if self._has_environment_error():
             return "environment_error"
-        if self.terminated:
-            return "episode_terminated"
-        if self.truncated and self.gameOverReason == pb.EnvStateMsg.SimulationEnd:
-            return "simulation_end"
-        if self.truncated:
-            return "episode_truncated"
+        if self.terminated or self.truncated:
+            return self._STATE_REASON_MAP.get(self.gameOverReason, "episode_terminated")
         return "running"
 
     def _pack_data(self, actions, spaceDesc):
