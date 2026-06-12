@@ -205,7 +205,7 @@ OpenGymInterface::SetSharedMemoryPrefix(const std::string& sharedMemoryPrefix)
             "ns3-ai Gym interface shared-memory prefix must be set "
             "before the message interface is opened");
     }
-    m_msgNames = Ns3AiMsgInterface::MakeNames(sharedMemoryPrefix);
+    m_msgNames = MailboxTransport::MakeNames(sharedMemoryPrefix);
 }
 
 void
@@ -221,7 +221,7 @@ OpenGymInterface::SetSharedMemoryNames(std::string segmentName,
             "ns3-ai Gym interface shared-memory names must be set "
             "before the message interface is opened");
     }
-    m_msgNames = Ns3AiMsgInterfaceNames{segmentName, cpp2pyMsgName, py2cppMsgName, lockableName, "My Header"};
+    m_msgNames = MailboxTransportNames{segmentName, cpp2pyMsgName, py2cppMsgName, lockableName, "My Header"};
 }
 
 void
@@ -237,12 +237,12 @@ OpenGymInterface::SetSharedMemorySize(uint32_t size)
     m_memorySize = size;
 }
 
-Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>*
+MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>*
 OpenGymInterface::GetMsgInterface()
 {
     if (!m_msgInterface)
     {
-        m_msgInterface = std::make_unique<Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>>(
+        m_msgInterface = std::make_unique<MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>>(
             false,
             false,
             false,
@@ -251,7 +251,7 @@ OpenGymInterface::GetMsgInterface()
             m_msgNames.m_cpp2pyMsgName.c_str(),
             m_msgNames.m_py2cppMsgName.c_str(),
             m_msgNames.m_lockableName.c_str(),
-            Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>::DEFAULT_SYNC_TIMEOUT_US,
+            MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>::DEFAULT_SYNC_TIMEOUT_US,
             m_msgNames.m_headerName.c_str());
     }
     return m_msgInterface.get();
@@ -283,7 +283,7 @@ OpenGymInterface::Init()
         simInitMsg.mutable_actspace()->CopyFrom(spaceDesc);
     }
 
-    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
+    MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
 
     msgInterface->CppSendBegin();
     SerializeGymMessageOrThrow(simInitMsg, msgInterface->GetCpp2PyStruct(), "SimInitMsg");
@@ -356,7 +356,7 @@ OpenGymInterface::SendCurrentState()
     }
     envStateMsg.set_info(extraInfo);
 
-    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
+    MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
     msgInterface->CppSendBegin();
     SerializeGymMessageOrThrow(envStateMsg, msgInterface->GetCpp2PyStruct(), "EnvStateMsg");
     msgInterface->CppSendEnd();
@@ -371,7 +371,7 @@ OpenGymInterface::ReceiveActions()
         return;
     }
 
-    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
+    MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>* msgInterface = GetMsgInterface();
     ns3_ai_gym::EnvActMsg envActMsg;
     msgInterface->CppRecvBegin();
     ParseGymMessageOrThrow(&envActMsg, msgInterface->GetPy2CppStruct(), "EnvActMsg");

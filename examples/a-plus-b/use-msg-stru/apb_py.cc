@@ -43,7 +43,7 @@ PYBIND11_MODULE(ns3ai_apb_py_stru, m)
 
     py::class_<ActStruct>(m, "PyActStruct", py::module_local()).def(py::init<>()).def_readwrite("c", &ActStruct::act_c);
 
-    using MsgInterface = ns3::Ns3AiMsgInterfaceImpl<EnvStruct, ActStruct>;
+    using MsgInterface = ns3::MailboxTransportImpl<EnvStruct, ActStruct>;
 
     py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl", py::module_local())
         .def(py::init<bool,
@@ -95,17 +95,17 @@ PYBIND11_MODULE(ns3ai_apb_py_stru, m)
              })
         .def("RequestClose",
              [](const MsgInterface& interface, uint8_t peer, uint8_t reason) {
-                 interface.RequestClose(static_cast<ns3::Ns3AiMsgPeer>(peer),
-                                        static_cast<ns3::Ns3AiMsgCloseReason>(reason));
+                 interface.RequestClose(static_cast<ns3::TransportPeer>(peer),
+                                        static_cast<ns3::TransportCloseReason>(reason));
              })
         .def("AcknowledgeClose",
              [](const MsgInterface& interface, uint8_t peer) {
-                 interface.AcknowledgeClose(static_cast<ns3::Ns3AiMsgPeer>(peer));
+                 interface.AcknowledgeClose(static_cast<ns3::TransportPeer>(peer));
              })
         .def("CheckGenerationId",
              [](const MsgInterface& interface, uint64_t generationId, uint8_t peer) {
                  return interface.CheckGenerationId(generationId,
-                                                    static_cast<ns3::Ns3AiMsgPeer>(peer));
+                                                    static_cast<ns3::TransportPeer>(peer));
              })
         .def("PyRecvBegin", &MsgInterface::PyRecvBegin)
         .def("PyRecvEnd", &MsgInterface::PyRecvEnd)

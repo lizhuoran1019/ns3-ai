@@ -21,7 +21,7 @@ namespace py = pybind11;
 /**
  * \brief Register ns3-ai typed exception classes in a pybind module.
  *
- * Each pybind module that exposes Ns3AiMsgInterfaceImpl or schema binding
+ * Each pybind module that exposes MailboxTransportImpl or schema binding
  * helpers must call this function during module initialization so that
  * Python callers can catch individual error categories.
  *

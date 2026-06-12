@@ -37,14 +37,14 @@ MakeUniqueSuffix(const char* name)
     return oss.str();
 }
 
-Ns3AiMsgInterfaceNames
+MailboxTransportNames
 MakeTestNames(const std::string& suffix)
 {
-    return Ns3AiMsgInterface::MakeNames("ns3-ai-error-test-" + suffix);
+    return MailboxTransport::MakeNames("ns3-ai-error-test-" + suffix);
 }
 
 void
-RemoveSegment(const Ns3AiMsgInterfaceNames& names)
+RemoveSegment(const MailboxTransportNames& names)
 {
     boost::interprocess::shared_memory_object::remove(names.m_segmentName.c_str());
 }
@@ -163,7 +163,7 @@ class AccessModeVectorCallStructGetterTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("access-vec-struct"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, true, false,
             4096,
             names.m_segmentName.c_str(),
@@ -172,7 +172,7 @@ class AccessModeVectorCallStructGetterTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000000,
             names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
             false, true, false,
             4096,
             names.m_segmentName.c_str(),
@@ -231,7 +231,7 @@ class AccessModeStructCallVectorGetterTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("access-struct-vec"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -240,7 +240,7 @@ class AccessModeStructCallVectorGetterTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000000,
             names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
             false, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -298,7 +298,7 @@ class OpenOnlyMissingVectorObjectTestCase : public TestCase
         RemoveSegment(names);
 
         // Creator: vector 模式，msg 名称 "vec-cpp2py"/"vec-py2cpp"
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, true, false,
             4096,
             names.m_segmentName.c_str(),
@@ -312,7 +312,7 @@ class OpenOnlyMissingVectorObjectTestCase : public TestCase
         bool caught = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+            MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
                 false, true, false,
                 4096,
                 names.m_segmentName.c_str(),
@@ -351,7 +351,7 @@ class OpenOnlyMissingStructObjectTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("missing-stru"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -364,7 +364,7 @@ class OpenOnlyMissingStructObjectTestCase : public TestCase
         bool caught = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+            MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
                 false, false, false,
                 4096,
                 names.m_segmentName.c_str(),
@@ -402,7 +402,7 @@ class OpenOnlyMissingSyncObjectTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("missing-sync"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -415,7 +415,7 @@ class OpenOnlyMissingSyncObjectTestCase : public TestCase
         bool caught = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+            MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
                 false, false, false,
                 4096,
                 names.m_segmentName.c_str(),
@@ -454,7 +454,7 @@ class OpenOnlyMissingHeaderObjectTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("missing-header"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -469,7 +469,7 @@ class OpenOnlyMissingHeaderObjectTestCase : public TestCase
         bool caught = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+            MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
                 false, false, false,
                 4096,
                 names.m_segmentName.c_str(),
@@ -590,7 +590,7 @@ class FinishHandlingNotConfiguredTestCase : public TestCase
         const auto names = MakeTestNames(MakeUniqueSuffix("no-finish"));
         RemoveSegment(names);
 
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -599,7 +599,7 @@ class FinishHandlingNotConfiguredTestCase : public TestCase
             names.m_lockableName.c_str(),
             1000000,
             names.m_headerName.c_str(), 0x1111, 0x2222, 1, 1, Ns3AiSchemaValidationMode::Strict);
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
             false, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -671,7 +671,7 @@ class AbiVersionMismatchTestCase : public TestCase
         RemoveSegment(names);
 
         // 1. creator 正常创建并初始化共享内存段
-        Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
+        MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> creator(
             true, false, false,
             4096,
             names.m_segmentName.c_str(),
@@ -698,7 +698,7 @@ class AbiVersionMismatchTestCase : public TestCase
         bool caught = false;
         try
         {
-            Ns3AiMsgInterfaceImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
+            MailboxTransportImpl<ErrorTestCppMsg, ErrorTestPyMsg> opener(
                 false, false, false,
                 4096,
                 names.m_segmentName.c_str(),

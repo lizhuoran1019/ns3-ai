@@ -117,7 +117,7 @@ class OpenGymInterface : public Object
     static Ptr<OpenGymInterface>* DoGet();
     static std::unordered_map<std::string, Ptr<OpenGymInterface>>* DoGetNamedInterfaces();
 
-    Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>* GetMsgInterface();
+    MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>* GetMsgInterface();
     uint64_t NextSequence();
 
     bool m_simEnd;
@@ -128,8 +128,8 @@ class OpenGymInterface : public Object
     uint64_t m_nextSequence;
     uint64_t m_pendingInitSequence;
     uint64_t m_pendingStateSequence;
-    Ns3AiMsgInterfaceNames m_msgNames;
-    std::unique_ptr<Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>> m_msgInterface;
+    MailboxTransportNames m_msgNames;
+    std::unique_ptr<MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>> m_msgInterface;
 
     Callback<Ptr<OpenGymSpace>> m_actionSpaceCb;
     Callback<Ptr<OpenGymSpace>> m_observationSpaceCb;

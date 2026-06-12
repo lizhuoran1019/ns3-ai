@@ -52,7 +52,7 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
         .def_readwrite("new_ssThresh", &ns3::TcpRlAct::new_ssThresh)
         .def_readwrite("new_cWnd", &ns3::TcpRlAct::new_cWnd);
 
-    using MsgInterface = ns3::Ns3AiMsgInterfaceImpl<ns3::TcpRlEnv, ns3::TcpRlAct>;
+    using MsgInterface = ns3::MailboxTransportImpl<ns3::TcpRlEnv, ns3::TcpRlAct>;
 
     py::class_<MsgInterface>(m, "Ns3AiMsgInterfaceImpl")
         .def(py::init<bool,
@@ -104,17 +104,17 @@ PYBIND11_MODULE(ns3ai_rltcp_msg_py, m)
              })
         .def("RequestClose",
              [](const MsgInterface& interface, uint8_t peer, uint8_t reason) {
-                 interface.RequestClose(static_cast<ns3::Ns3AiMsgPeer>(peer),
-                                        static_cast<ns3::Ns3AiMsgCloseReason>(reason));
+                 interface.RequestClose(static_cast<ns3::TransportPeer>(peer),
+                                        static_cast<ns3::TransportCloseReason>(reason));
              })
         .def("AcknowledgeClose",
              [](const MsgInterface& interface, uint8_t peer) {
-                 interface.AcknowledgeClose(static_cast<ns3::Ns3AiMsgPeer>(peer));
+                 interface.AcknowledgeClose(static_cast<ns3::TransportPeer>(peer));
              })
         .def("CheckGenerationId",
              [](const MsgInterface& interface, uint64_t generationId, uint8_t peer) {
                  return interface.CheckGenerationId(generationId,
-                                                    static_cast<ns3::Ns3AiMsgPeer>(peer));
+                                                    static_cast<ns3::TransportPeer>(peer));
              })
         .def("PyRecvBegin", &MsgInterface::PyRecvBegin)
         .def("PyRecvEnd", &MsgInterface::PyRecvEnd)

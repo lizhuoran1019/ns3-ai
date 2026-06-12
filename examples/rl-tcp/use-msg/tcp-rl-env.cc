@@ -35,7 +35,7 @@ NS_OBJECT_ENSURE_REGISTERED(TcpTimeStepEnv);
 TcpTimeStepEnv::TcpTimeStepEnv()
 {
     //    std::cerr << "in TcpTimeStepEnv(), this = " << this << std::endl;
-    auto interface = Ns3AiMsgInterface::Get();
+    auto interface = MailboxTransport::Get();
     interface->SetIsMemoryCreator(false);
     interface->SetUseVector(false);
     interface->SetHandleFinish(true);
@@ -109,8 +109,8 @@ TcpTimeStepEnv::ScheduleNotify()
 {
     Simulator::Schedule(m_timeStep, &TcpTimeStepEnv::ScheduleNotify, this);
 
-    Ns3AiMsgInterfaceImpl<TcpRlEnv, TcpRlAct>* msgInterface =
-        Ns3AiMsgInterface::Get()->GetInterface<TcpRlEnv, TcpRlAct>();
+    MailboxTransportImpl<TcpRlEnv, TcpRlAct>* msgInterface =
+        MailboxTransport::Get()->GetInterface<TcpRlEnv, TcpRlAct>();
 
     msgInterface->CppSendBegin();
     auto env = msgInterface->GetCpp2PyStruct();
@@ -233,7 +233,7 @@ NS_OBJECT_ENSURE_REGISTERED(TcpEventBasedEnv);
 
 TcpEventBasedEnv::TcpEventBasedEnv()
 {
-    auto interface = Ns3AiMsgInterface::Get();
+    auto interface = MailboxTransport::Get();
     interface->SetIsMemoryCreator(false);
     interface->SetUseVector(false);
     interface->SetHandleFinish(true);
@@ -299,8 +299,8 @@ TcpEventBasedEnv::RxPktTrace(Ptr<const Packet>, const TcpHeader&, Ptr<const TcpS
 void
 TcpEventBasedEnv::Notify()
 {
-    Ns3AiMsgInterfaceImpl<TcpRlEnv, TcpRlAct>* msgInterface =
-        Ns3AiMsgInterface::Get()->GetInterface<TcpRlEnv, TcpRlAct>();
+    MailboxTransportImpl<TcpRlEnv, TcpRlAct>* msgInterface =
+        MailboxTransport::Get()->GetInterface<TcpRlEnv, TcpRlAct>();
 
     msgInterface->CppSendBegin();
     auto env = msgInterface->GetCpp2PyStruct();

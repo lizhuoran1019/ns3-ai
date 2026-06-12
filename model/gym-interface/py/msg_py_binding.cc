@@ -42,7 +42,7 @@ ValidateGymMsgSize(const Ns3AiGymMsg& msg)
 PYBIND11_MODULE(ns3ai_gym_msg_py, m)
 {
     ns3::BindNs3AiErrorTypes(m);
-    using GymMsgInterface = ns3::Ns3AiMsgInterfaceImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
+    using GymMsgInterface = ns3::MailboxTransportImpl<Ns3AiGymMsg, Ns3AiGymMsg>;
 
     py::enum_<ns3::Ns3AiSchemaValidationMode>(m, "Ns3AiSchemaValidationMode", py::module_local())
         .value("Strict", ns3::Ns3AiSchemaValidationMode::Strict)
@@ -126,17 +126,17 @@ PYBIND11_MODULE(ns3ai_gym_msg_py, m)
              })
         .def("RequestClose",
              [](const GymMsgInterface& interface, uint8_t peer, uint8_t reason) {
-                 interface.RequestClose(static_cast<ns3::Ns3AiMsgPeer>(peer),
-                                        static_cast<ns3::Ns3AiMsgCloseReason>(reason));
+                 interface.RequestClose(static_cast<ns3::TransportPeer>(peer),
+                                        static_cast<ns3::TransportCloseReason>(reason));
              })
         .def("AcknowledgeClose",
              [](const GymMsgInterface& interface, uint8_t peer) {
-                 interface.AcknowledgeClose(static_cast<ns3::Ns3AiMsgPeer>(peer));
+                 interface.AcknowledgeClose(static_cast<ns3::TransportPeer>(peer));
              })
         .def("CheckGenerationId",
              [](const GymMsgInterface& interface, uint64_t generationId, uint8_t peer) {
                  return interface.CheckGenerationId(generationId,
-                                                    static_cast<ns3::Ns3AiMsgPeer>(peer));
+                                                    static_cast<ns3::TransportPeer>(peer));
              })
         .def("PyRecvBegin", &GymMsgInterface::PyRecvBegin)
         .def("PyRecvEnd", &GymMsgInterface::PyRecvEnd)

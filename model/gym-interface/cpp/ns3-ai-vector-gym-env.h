@@ -30,6 +30,12 @@ class OpenGymSpace;
  * OpenGymEnv callback surface. A simulation can bind each vector lane to an
  * isolated OpenGymInterface while keeping one object responsible for vector
  * lifecycle and lane validation.
+ *
+ * \warning This is NOT an independent worker pool.  All lanes share a single
+ * ns-3 process.  The implementation is a synchronous facade: step() sends
+ * actions to all lanes, then waits in order.  A blocked lane blocks all lanes.
+ * Per-lane reset after stepping and asynchronous step are not supported.
+ * See Ns3VecEnv (Python side) for the full limitation list.
  */
 class OpenGymVectorEnv : public OpenGymEnv
 {

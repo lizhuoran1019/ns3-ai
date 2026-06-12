@@ -169,3 +169,75 @@ _Avoid_: 统一的全局心跳周期
 **心跳超时（Heartbeat Timeout）**：
 从最后一次观察到对端心跳推进开始，经过此时间后判定对端死亡。应当是心跳间隔的倍数（默认 3×），而非绝对固定窗口。心跳超时触发后直接进入 Error 结论，不设置额外 grace period。
 _Avoid_: 单次心跳丢失即判决死亡、grace period 缓冲
+
+### 传输层概念
+
+**Transport**:
+抽象的 IPC 通信层。定义字节流和 metadata 的发送/接收契约，不理解上层序列化格式。
+_Avoid_: Message interface, communication channel (当指具体实现时)
+
+**TransportMessage**:
+传输层的消息载体。包含 `TransportMetadata`（envelope）和 `std::vector<uint8_t>` payload。payload 是原始字节，不包含固定大小的 struct wrapper。
+_Avoid_: GymMsg, Struct
+
+**TransportMetadata**:
+per-message 的 envelope 字段集合，包括 `laneId`、`messageId`、`episodeId`、`stepId`、`flags`。Transport 层保留但不解释语义（除 `laneId` 路由外）。
+_Avoid_: Header, envelope (当指 `Ns3AiMsgProtocolHeader` 时)
+
+**TransportCapabilities**:
+enum-graded 的传输能力描述。不是 bool flags 的集合。用 enum/struct 表达保证级别，如 `laneGuarantee = PhysicalPerLaneTransport`、`sendConcurrency = SPSC`。
+
+**ConcurrencyModel**:
+`SPSC | MPSC | SPMC | MPMC`。描述 Transport 实例支持的并发生产/消费模型。
+
+### Transport 实现
+
+**MailboxTransport**:
+单槽（single-slot）、锁步（lock-step）的共享内存 IPC 实现。双向 request/response 语义，不提供队列、批处理、lane 隔离、多消费者路由。
+_Avoid_: Ns3AiMsgInterface, 通用消息接口
+
+**QueueTransport**:
+基于 ring-buffer 的多槽传输实现。支持可配置的 `queueDepth`、`backpressurePolicy`、`dropPolicy`。初版为 SPSC。
+_Avoid_: queue, IPC queue (当不特指此实现时)
+
+**BatchTransport**:
+为批量提交/收集场景设计的传输实现（未来）。
+_Avoid_: 批量消息发送
+
+**MultiLaneTransport**:
+lane → Transport 路由组合器。持有 N 个独立 Transport 实例（初版为 `PerLaneTransportGroup`：N 个 SPSC Transport）。VecEnv 依赖此接口，不直接管理 `vector<Transport>`。
+_Avoid_: Lane manager, transport pool
+
+**MailboxSyncBlock**:
+mailbox 共享内存中的同步控制块。包含 empty/full 计数器、peer state、session state、heartbeat 计数器。mailbox 实现专属，不通用。
+_Avoid_: Ns3AiMsgSync
+
+### 队列概念
+
+**RingBufferControl**:
+per-direction 的 ring-buffer 控制块。cache-line 对齐（64 字节）。包含 monotonic `uint64_t writeIndex`、`uint64_t readIndex`、`depth`、`slotSize`。
+
+**DropInfo**:
+发送端显式返回的丢弃信息。包含 `laneId`、`droppedMessageId`、`DropReason`。不是依赖接收端通过 messageId gap 被动检测。
+_Avoid_: silent drop
+
+### 错误模型
+
+**Session-level 错误**:
+全局不可恢复。heartbeat timeout、ABI/protocol mismatch、shared memory corruption、peer process death。所有 transport 实现共享。
+_Avoid_: transport error (当指某个 lane 错误时)
+
+**Send/Recv-level 错误**:
+操作级可恢复错误。queue full、message too large、slot write collision。`SendResult`/`RecvResult` 携带精确状态码。
+
+**Lane-level 错误**:
+VecEnv 管理。lane timeout、lane crash、lane recovery。Transport 层报告 `LaneTransportStats`（sent/received/dropped/timeoutCount/lastMessageId），不决定 lane 生死。
+
+### Gym/RL 层
+
+**TypedChannel**:
+TransportMessage payload 的类型化适配器。`TypedChannel<T>` 将单个 `T` 拷贝/序列化进出 payload，`VectorTypedChannel<T>` 打包 `vector<T>`。不上移到 QueueTransport 核心。
+
+**Ns3VecEnv (short-term)**:
+同步向量环境，非独立 worker pool。不支持 per-lane reset、async step、lane failure isolation。
+_Avoid_: 并行环境、分布式环境

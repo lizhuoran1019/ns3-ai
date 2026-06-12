@@ -34,7 +34,7 @@ NS_OBJECT_ENSURE_REGISTERED(CQIDL);
 
 CQIDL::CQIDL()
 {
-    auto interface = Ns3AiMsgInterface::Get();
+    auto interface = MailboxTransport::Get();
     interface->SetIsMemoryCreator(false);
     interface->SetUseVector(false);
     interface->SetHandleFinish(true);
@@ -60,8 +60,8 @@ CQIDL::GetTypeId()
 void
 CQIDL::SetWbCQI(uint8_t cqi)
 {
-    Ns3AiMsgInterfaceImpl<CqiFeature, CqiPredicted>* msgInterface =
-        Ns3AiMsgInterface::Get()->GetInterface<CqiFeature, CqiPredicted>();
+    MailboxTransportImpl<CqiFeature, CqiPredicted>* msgInterface =
+        MailboxTransport::Get()->GetInterface<CqiFeature, CqiPredicted>();
     msgInterface->CppSendBegin();
     msgInterface->GetCpp2PyStruct()->wbCqi = cqi;
     msgInterface->CppSendEnd();
@@ -75,8 +75,8 @@ CQIDL::SetWbCQI(uint8_t cqi)
 uint8_t
 CQIDL::GetWbCQI()
 {
-    Ns3AiMsgInterfaceImpl<CqiFeature, CqiPredicted>* msgInterface =
-        Ns3AiMsgInterface::Get()->GetInterface<CqiFeature, CqiPredicted>();
+    MailboxTransportImpl<CqiFeature, CqiPredicted>* msgInterface =
+        MailboxTransport::Get()->GetInterface<CqiFeature, CqiPredicted>();
     msgInterface->CppRecvBegin();
     uint8_t ret = msgInterface->GetPy2CppStruct()->new_wbCqi;
     msgInterface->CppRecvEnd();

@@ -8,10 +8,32 @@ from ns3ai_gym_env.envs.ns3_environment import Ns3Env
 class Ns3VecEnv:
     """A synchronous vectorized ns-3 Gymnasium environment.
 
-    This class owns a batch of ``Ns3Env`` workers and exposes vectorized ``reset``
-    and ``step`` methods so callers do not have to hand-roll one shared-memory
-    channel per agent. Each worker still has an isolated transport namespace, but
-    that is an implementation detail hidden behind a single vector-env API.
+    This class owns a batch of ``Ns3Env`` workers and exposes vectorized
+    ``reset`` and ``step`` methods so callers do not have to hand-roll one
+    shared-memory channel per agent.  Each worker has an isolated transport
+    namespace, but that is an implementation detail hidden behind a single
+    vector-env API.
+
+    .. warning::
+
+       **Current limitations — this is NOT an independent worker pool.**
+
+       * The implementation is a **synchronous facade** over ``num_envs``
+         side-by-side environments within a *single ns-3 process*.  It is
+         NOT a pool of independent ns-3 simulator instances.
+       * **Per-lane reset** after stepping is **not supported**.  Calling
+         ``reset()`` after any ``step()`` raises ``RuntimeError``.  Create
+         a fresh ``Ns3VecEnv`` to restart all lanes.
+       * **Asynchronous stepping** is **not supported**.  ``step()`` sends
+         all actions, then waits for all lanes in order.  One slow or hung
+         lane blocks the entire vector step.
+       * **Lane failure isolation** is **not provided**.  If a single lane's
+         shared-memory channel times out or fails, the entire session enters
+         an error state.
+
+       These limitations are tracked for a future ``Transport``-based
+       redesign that will support per-lane reset, async step, and lane
+       failure isolation.
     """
 
     def __init__(self,
