@@ -130,12 +130,30 @@ def _make_discrete_init_msg(n_obs=1, n_act=1, sequence=0):
     return msg.SerializeToString()
 
 
-def _make_env_state_msg(obs_value=0, reward=0.0, is_game_over=False, sequence=0):
+def _make_env_state_msg(obs_value=0,
+                        reward=0.0,
+                        is_game_over=False,
+                        sequence=0,
+                        terminated=None,
+                        truncated=None,
+                        reason=None,
+                        error_code=None,
+                        error_message=None):
     """构造 EnvStateMsg，含 Discrete 观测数据。"""
     msg = pb.EnvStateMsg()
     msg.sequence = sequence
     msg.reward = reward
     msg.isGameOver = is_game_over
+    if terminated is not None:
+        msg.terminated = terminated
+    if truncated is not None:
+        msg.truncated = truncated
+    if reason is not None:
+        msg.reason = reason
+    if error_code is not None:
+        msg.errorCode = error_code
+    if error_message is not None:
+        msg.errorMessage = error_message
 
     data_container = pb.DataContainer()
     data_container.type = pb.Discrete
@@ -245,6 +263,76 @@ class Ns3EnvMockTest(unittest.TestCase):
         close = pb.EnvActMsg()
         close.ParseFromString(fake.writes[2])  # gameOver 触发的关闭命令
         self.assertTrue(close.stopSimReq)
+
+    def test_step_with_truncation_returns_truncated(self):
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
+        state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)
+        state_seq1 = _make_env_state_msg(obs_value=1,
+                                         reward=0.5,
+                                         is_game_over=True,
+                                         sequence=1,
+                                         terminated=False,
+                                         truncated=True,
+                                         reason=pb.EnvStateMsg.EpisodeTruncated)
+        fake = FakeGymInterface([sim_init, state_seq0, state_seq1])
+
+        env = Ns3Env("target", ".", autoStart=False)
+        env.msgInterface = fake
+        env.initialize_env()
+        env.rx_env_state()
+
+        obs, reward, terminated, truncated, info = env.step(0)
+
+        self.assertEqual(obs, 1)
+        self.assertEqual(reward, 0.5)
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
+        self.assertEqual(info["ns3ai_reason"], "episode_truncated")
+
+    def test_step_with_environment_error_raises_runtime_error(self):
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
+        state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)
+        state_seq1 = _make_env_state_msg(obs_value=1,
+                                         reward=0.0,
+                                         is_game_over=True,
+                                         sequence=1,
+                                         reason=pb.EnvStateMsg.EnvironmentError,
+                                         error_code=17,
+                                         error_message="illegal action")
+        fake = FakeGymInterface([sim_init, state_seq0, state_seq1])
+
+        env = Ns3Env("target", ".", autoStart=False)
+        env.msgInterface = fake
+        env.initialize_env()
+        env.rx_env_state()
+
+        with self.assertRaisesRegex(RuntimeError, "illegal action"):
+            env.step(0)
+
+    def test_step_with_simulation_end_preserves_reason(self):
+        sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
+        state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)
+        state_seq1 = _make_env_state_msg(obs_value=1,
+                                         reward=0.5,
+                                         is_game_over=True,
+                                         sequence=1,
+                                         terminated=False,
+                                         truncated=True,
+                                         reason=pb.EnvStateMsg.SimulationEnd)
+        fake = FakeGymInterface([sim_init, state_seq0, state_seq1])
+
+        env = Ns3Env("target", ".", autoStart=False)
+        env.msgInterface = fake
+        env.initialize_env()
+        env.rx_env_state()
+
+        obs, reward, terminated, truncated, info = env.step(0)
+
+        self.assertEqual(obs, 1)
+        self.assertEqual(reward, 0.5)
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
+        self.assertEqual(info["ns3ai_reason"], "simulation_end")
 
     def test_reset_after_game_over_reinitializes_environment(self):
         """验证 reset() 在 game over 后重新初始化并返回新 observation"""

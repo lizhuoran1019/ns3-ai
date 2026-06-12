@@ -9,6 +9,14 @@ DEFAULT_GYM_SHM_SIZE = 1048576
 
 
 class Ns3Env(gym.Env):
+    _STATE_REASON_MAP = {
+        pb.EnvStateMsg.ReasonUnspecified: "unspecified",
+        pb.EnvStateMsg.SimulationEnd: "simulation_end",
+        pb.EnvStateMsg.EpisodeTerminated: "episode_terminated",
+        pb.EnvStateMsg.EpisodeTruncated: "episode_truncated",
+        pb.EnvStateMsg.EnvironmentError: "environment_error",
+    }
+
     def _ensure_msg_fits(self, payload, message_name):
         payload_size = len(payload)
         if payload_size > py_binding.msg_buffer_size:
@@ -19,6 +27,17 @@ class Ns3Env(gym.Env):
                     message_name, payload_size, py_binding.msg_buffer_size
                 )
             )
+
+    def _raise_env_error_if_present(self):
+        if self.gameOverReason != pb.EnvStateMsg.EnvironmentError and self.errorCode == 0:
+            return
+
+        message = self.errorMessage or "ns3-ai Gym environment reported an unspecified error"
+        if self.errorCode != 0:
+            raise RuntimeError(
+                "ns3-ai Gym environment error {}: {}".format(self.errorCode, message)
+            )
+        raise RuntimeError("ns3-ai Gym environment error: {}".format(message))
 
     def _create_space(self, spaceDesc):
         space = None
@@ -183,8 +202,24 @@ class Ns3Env(gym.Env):
         self.currentStateSequence = envStateMsg.sequence
         self.obsData = self._create_data(envStateMsg.obsData)
         self.reward = envStateMsg.reward
-        self.gameOver = envStateMsg.isGameOver
+        self.terminated = envStateMsg.terminated
+        self.truncated = envStateMsg.truncated
         self.gameOverReason = envStateMsg.reason
+        self.errorCode = envStateMsg.errorCode
+        self.errorMessage = envStateMsg.errorMessage
+
+        if not self.terminated and not self.truncated and envStateMsg.isGameOver:
+            if self.gameOverReason == pb.EnvStateMsg.SimulationEnd:
+                self.truncated = True
+            else:
+                self.terminated = True
+
+        self.gameOver = (
+            self.terminated
+            or self.truncated
+            or self.gameOverReason == pb.EnvStateMsg.EnvironmentError
+            or self.errorCode != 0
+        )
 
         if self.gameOver:
             self.send_close_command()
@@ -194,6 +229,7 @@ class Ns3Env(gym.Env):
             self.extraInfo = {}
 
         self.newStateRx = True
+        self._raise_env_error_if_present()
 
     def get_obs(self):
         return self.obsData
@@ -206,6 +242,9 @@ class Ns3Env(gym.Env):
 
     def get_extra_info(self):
         return self.extraInfo
+
+    def get_reason(self):
+        return self._STATE_REASON_MAP.get(self.gameOverReason, "unspecified")
 
     def _pack_data(self, actions, spaceDesc):
         dataContainer = pb.DataContainer()
@@ -301,9 +340,8 @@ class Ns3Env(gym.Env):
     def get_state(self):
         obs = self.get_obs()
         reward = self.get_reward()
-        done = self.is_game_over()
-        extraInfo = {"info": self.get_extra_info()}
-        return obs, reward, done, False, extraInfo
+        info = {"info": self.get_extra_info(), "ns3ai_reason": self.get_reason()}
+        return obs, reward, self.terminated, self.truncated, info
 
     def __init__(self,
                  targetName,
@@ -328,9 +366,13 @@ class Ns3Env(gym.Env):
         self.currentStateSequence = 0
         self.obsData = None
         self.reward = 0
+        self.terminated = False
+        self.truncated = False
         self.gameOver = False
         self.gameOverReason = None
         self.extraInfo = None
+        self.errorCode = 0
+        self.errorMessage = ""
         self.envDirty = False
         self.action_space = None
         self.observation_space = None
@@ -368,9 +410,13 @@ class Ns3Env(gym.Env):
         self.currentStateSequence = 0
         self.obsData = None
         self.reward = 0
+        self.terminated = False
+        self.truncated = False
         self.gameOver = False
         self.gameOverReason = None
         self.extraInfo = None
+        self.errorCode = 0
+        self.errorMessage = ""
 
         self.msgInterface = self.exp.run(setting=self.ns3Settings, show_output=self.showOutput)
         self.initialize_env()
