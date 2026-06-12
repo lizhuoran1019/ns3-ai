@@ -150,6 +150,8 @@ def _make_env_state_msg(obs_value=0,
         msg.truncated = truncated
     if reason is not None:
         msg.reason = reason
+    elif is_game_over:
+        msg.reason = pb.EnvStateMsg.GameOver
     if error_code is not None:
         msg.errorCode = error_code
     if error_message is not None:
@@ -264,6 +266,9 @@ class Ns3EnvMockTest(unittest.TestCase):
         close.ParseFromString(fake.writes[2])  # gameOver 触发的关闭命令
         self.assertTrue(close.stopSimReq)
 
+        with self.assertRaisesRegex(RuntimeError, "reset\\(\\) must be called before step\\(\\)"):
+            env.step(0)
+
     def test_step_with_truncation_returns_truncated(self):
         sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
         state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)
@@ -289,6 +294,9 @@ class Ns3EnvMockTest(unittest.TestCase):
         self.assertTrue(truncated)
         self.assertEqual(info["ns3ai_reason"], "episode_truncated")
 
+        with self.assertRaisesRegex(RuntimeError, "reset\\(\\) must be called before step\\(\\)"):
+            env.step(0)
+
     def test_step_with_environment_error_raises_runtime_error(self):
         sim_init = _make_discrete_init_msg(n_obs=2, n_act=1, sequence=0)
         state_seq0 = _make_env_state_msg(obs_value=0, reward=0.0, sequence=0)
@@ -307,6 +315,9 @@ class Ns3EnvMockTest(unittest.TestCase):
         env.rx_env_state()
 
         with self.assertRaisesRegex(RuntimeError, "illegal action"):
+            env.step(0)
+
+        with self.assertRaisesRegex(RuntimeError, "reset\\(\\) must be called before step\\(\\)"):
             env.step(0)
 
     def test_step_with_simulation_end_preserves_reason(self):

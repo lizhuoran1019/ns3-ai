@@ -110,19 +110,18 @@ message EnvStateMsg {
 	DataContainer obsData = 1;
 	float reward = 2;
 	bool isGameOver = 3;
-	bool terminated = 4;
-	bool truncated = 5;
 
 	enum Reason {
-		ReasonUnspecified = 0;
-		SimulationEnd = 1;
-		EpisodeTerminated = 2;
-		EpisodeTruncated = 3;
-		EnvironmentError = 4;
+		SimulationEnd = 0;
+		GameOver = 1;
+		EpisodeTruncated = 2;
+		EnvironmentError = 3;
 	}
-	Reason reason = 6;
-	string info = 7;
-	uint64 sequence = 8;
+	Reason reason = 4;
+	string info = 5;
+	uint64 sequence = 6;
+	bool terminated = 7;
+	bool truncated = 8;
 	int32 errorCode = 9;
 	string errorMessage = 10;
 }

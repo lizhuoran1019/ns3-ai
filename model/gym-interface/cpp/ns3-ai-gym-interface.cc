@@ -343,34 +343,31 @@ OpenGymInterface::SendCurrentState()
         obsDataContainerPbMsg = obsDataContainer->GetDataContainerPbMsg();
         envStateMsg.mutable_obsdata()->CopyFrom(obsDataContainerPbMsg);
     }
-    if (m_simEnd)
-    {
-        terminated = false;
-        truncated = true;
-    }
+    const bool hasEnvironmentError = (errorCode != 0) || !errorMessage.empty();
+    const bool simulationEndOnly = m_simEnd && !hasEnvironmentError && !terminated && !truncated;
+    const bool finalTruncated = truncated || simulationEndOnly;
 
     envStateMsg.set_reward(reward);
     envStateMsg.set_terminated(terminated);
-    envStateMsg.set_truncated(truncated);
-    envStateMsg.set_isgameover(terminated || truncated || errorCode != 0 || !errorMessage.empty());
+    envStateMsg.set_truncated(finalTruncated);
+    envStateMsg.set_isgameover(terminated || finalTruncated || hasEnvironmentError);
     envStateMsg.set_errorcode(errorCode);
     envStateMsg.set_errormessage(errorMessage);
-    envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::ReasonUnspecified);
-    if (errorCode != 0 || !errorMessage.empty())
+    if (hasEnvironmentError)
     {
         envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::EnvironmentError);
     }
-    else if (m_simEnd)
+    else if (terminated)
     {
-        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::SimulationEnd);
+        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::GameOver);
     }
     else if (truncated)
     {
         envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::EpisodeTruncated);
     }
-    else if (terminated)
+    else if (simulationEndOnly)
     {
-        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::EpisodeTerminated);
+        envStateMsg.set_reason(ns3_ai_gym::EnvStateMsg::SimulationEnd);
     }
     envStateMsg.set_info(extraInfo);
 

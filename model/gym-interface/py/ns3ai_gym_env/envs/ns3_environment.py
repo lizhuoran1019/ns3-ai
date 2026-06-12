@@ -10,9 +10,8 @@ DEFAULT_GYM_SHM_SIZE = 1048576
 
 class Ns3Env(gym.Env):
     _STATE_REASON_MAP = {
-        pb.EnvStateMsg.ReasonUnspecified: "unspecified",
         pb.EnvStateMsg.SimulationEnd: "simulation_end",
-        pb.EnvStateMsg.EpisodeTerminated: "episode_terminated",
+        pb.EnvStateMsg.GameOver: "episode_terminated",
         pb.EnvStateMsg.EpisodeTruncated: "episode_truncated",
         pb.EnvStateMsg.EnvironmentError: "environment_error",
     }
@@ -38,6 +37,10 @@ class Ns3Env(gym.Env):
                 "ns3-ai Gym environment error {}: {}".format(self.errorCode, message)
             )
         raise RuntimeError("ns3-ai Gym environment error: {}".format(message))
+
+    def _ensure_step_allowed(self):
+        if self.gameOver:
+            raise RuntimeError("reset() must be called before step() after a terminal state")
 
     def _create_space(self, spaceDesc):
         space = None
@@ -244,7 +247,15 @@ class Ns3Env(gym.Env):
         return self.extraInfo
 
     def get_reason(self):
-        return self._STATE_REASON_MAP.get(self.gameOverReason, "unspecified")
+        if self.errorCode != 0 or self.gameOverReason == pb.EnvStateMsg.EnvironmentError:
+            return "environment_error"
+        if self.terminated:
+            return "episode_terminated"
+        if self.truncated and self.gameOverReason == pb.EnvStateMsg.SimulationEnd:
+            return "simulation_end"
+        if self.truncated:
+            return "episode_truncated"
+        return "running"
 
     def _pack_data(self, actions, spaceDesc):
         dataContainer = pb.DataContainer()
@@ -322,6 +333,7 @@ class Ns3Env(gym.Env):
         return dataContainer
 
     def send_actions(self, actions):
+        self._ensure_step_allowed()
         reply = pb.EnvActMsg()
         reply.sequence = self.currentStateSequence
 
@@ -390,6 +402,7 @@ class Ns3Env(gym.Env):
         return self
 
     def step(self, actions):
+        self._ensure_step_allowed()
         self.send_actions(actions)
         self.rx_env_state()
         self.envDirty = True
