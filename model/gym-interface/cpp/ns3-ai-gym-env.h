@@ -82,6 +82,8 @@ class OpenGymEnv : public Object
 
     /**
      * Get environment-side error message for the current state.
+     * A non-empty message is treated as an environment error signal.
+     * Do not use this channel for warnings or informational text.
      */
     virtual std::string GetErrorMessage();
 
